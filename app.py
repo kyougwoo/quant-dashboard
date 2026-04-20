@@ -20,13 +20,14 @@ st.markdown("""
 <style>
 @media (max-width: 768px) {
     .block-container {
-        padding: 1rem 1rem 2rem 1rem !important;
+        padding: 1rem 0.5rem 2rem 0.5rem !important;
     }
     h1 {
-        font-size: 1.5rem !important;
+        font-size: 1.4rem !important;
+        margin-bottom: 10px !important;
     }
     h2 {
-        font-size: 1.3rem !important;
+        font-size: 1.2rem !important;
     }
     h3 {
         font-size: 1.1rem !important;
@@ -39,17 +40,21 @@ st.markdown("""
     [data-testid="stMetricValue"] {
         font-size: 1.5rem !important;
     }
-    div[data-testid="stHorizontalBlock"] {
-        gap: 0.5rem !important;
-    }
 }
 /* 타이틀 옆 by 지후아빠 스타일 */
 .title-by {
-    font-size: 1rem;
-    color: #6b7280;
-    font-weight: normal;
+    font-size: 0.55em;
+    color: #4b5563;
+    font-weight: 600;
     vertical-align: middle;
-    margin-left: 10px;
+    margin-left: 8px;
+    background-color: #f3f4f6;
+    padding: 3px 8px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    display: inline-block;
+    position: relative;
+    top: -3px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -73,6 +78,9 @@ def save_portfolio(df):
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = load_portfolio()
 
+# ==========================================
+# 사이드바 (설정만 남김, 검색은 메인으로 이동)
+# ==========================================
 st.sidebar.title("⚙️ 시스템 설정")
 
 if "GEMINI_API_KEY" in st.secrets:
@@ -80,14 +88,6 @@ if "GEMINI_API_KEY" in st.secrets:
     st.sidebar.success("✅ 시스템에 API 키가 연동되었습니다.")
 else:
     gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Google AI Studio 발급 키")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 빠른 분석 (Watchlist)")
-fast_search = st.sidebar.radio("관심 종목 바로가기", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "아난티", "두산에너빌리티", "HD현대미포", "제주반도체", "루닛", "유니슨", "영풍", "인스코비"])
-if fast_search == "직접 입력":
-    stock_name = st.sidebar.text_input("분석할 종목명 (또는 6자리 코드)", "삼성전자")
-else:
-    stock_name = fast_search
 
 # ==========================================
 # 2. 데이터 수집 & 클라우드 기법 파이썬 수식화
@@ -205,18 +205,31 @@ def get_current_price(ticker):
 # ==========================================
 # 3. 메인 대시보드 UI
 # ==========================================
-# 💡 변경점: 타이틀 우측에 by 지후아빠 마크업 적용
-st.markdown("<h1>☁️ 클라우드 기법 AI 퀀트 대시보드 <span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
-st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 3-Agent 시스템")
+st.markdown("<h1>☁️ 클라우드 기법 퀀트 대시보드<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 시스템")
 
-tab1, tab2, tab3 = st.tabs(["📊 개별 종목 분석", "💼 내 포트폴리오 관리", "🔍 클라우드 조건 검색기 (Screener)"])
+# 💡 스마트폰 겹침 방지: 검색창을 메인 화면 상단으로 분리
+st.markdown("---")
+col_s1, col_s2 = st.columns([1, 1])
+with col_s1:
+    fast_search = st.selectbox("🎯 관심 종목 빠른 선택", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "아난티", "두산에너빌리티", "HD현대미포", "제주반도체", "루닛", "유니슨", "영풍", "인스코비"])
+with col_s2:
+    if fast_search == "직접 입력":
+        stock_name = st.text_input("분석할 종목명 (또는 6자리 코드)", "삼성전자")
+    else:
+        stock_name = fast_search
+        st.text_input("선택된 종목", value=stock_name, disabled=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+tab1, tab2, tab3 = st.tabs(["📊 개별 종목 분석", "💼 내 포트폴리오 관리", "🔍 클라우드 조건 검색기"])
 
 # ------------------------------------------
 # [탭 1] 개별 종목 분석
 # ------------------------------------------
 with tab1:
     if not gemini_api_key:
-        st.warning("👈 왼쪽 사이드바에 Gemini API Key를 입력해야 합니다.")
+        st.warning("👈 왼쪽 사이드바 메뉴( > )를 열어 Gemini API Key를 입력해야 합니다.")
         st.stop()
 
     actual_name, ticker = get_stock_info(stock_name)
@@ -225,29 +238,38 @@ with tab1:
         st.stop()
 
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
-    col1, col2 = st.columns([2, 1])
+    
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=365)
+    with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
+        try: 
+            raw_df = fdr.DataReader(ticker, start_date, end_date)
+            df, tech_ind = calculate_cloud_indicators(raw_df)
+        except Exception: df = None; tech_ind = {}
+        
+    if df is not None and not df.empty:
+        display_df = df.tail(90)
+        fig = go.Figure(data=[go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가")])
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='magenta', width=1.5), name='5 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='yellow', width=1.5), name='15 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 거래량 종가 (매물대)'))
+        
+        # 💡 스마트폰 겹침 방지: 차트는 가로 전체 차지, 범례는 상단 배치
+        fig.update_layout(
+            title="최근 3개월 캔들 및 클라우드 지표", 
+            xaxis_rangeslider_visible=False, 
+            height=400, 
+            margin=dict(l=10, r=10, t=40, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    with col1:
-        end_date = datetime.today()
-        start_date = end_date - timedelta(days=365)
-        with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
-            try: 
-                raw_df = fdr.DataReader(ticker, start_date, end_date)
-                df, tech_ind = calculate_cloud_indicators(raw_df)
-            except Exception: df = None; tech_ind = {}
-            
-        if df is not None and not df.empty:
-            display_df = df.tail(90)
-            fig = go.Figure(data=[go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가")])
-            fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='magenta', width=1.5), name='5 EMA'))
-            fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='yellow', width=1.5), name='15 EMA'))
-            fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
-            fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 거래량 종가 (매물대)'))
-            
-            fig.update_layout(title="최근 3개월 캔들 및 클라우드 지표", xaxis_rangeslider_visible=False, height=400, margin=dict(l=0, r=0, t=40, b=0))
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
+    # 💡 스마트폰 겹침 방지: 차트 밑으로 4원칙과 뉴스를 넓게 분리 배치
+    st.markdown("---")
+    info_col1, info_col2 = st.columns(2)
+    
+    with info_col1:
         st.markdown("**☁️ 클라우드 기법 매수 4원칙 체크**")
         if tech_ind:
             rules = tech_ind["Cloud_Rules"]
@@ -259,7 +281,8 @@ with tab1:
             current_p = int(df['Close'].iloc[-1])
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
-        
+    
+    with info_col2:
         st.markdown("**📰 최근 뉴스 헤드라인**")
         news_items = get_recent_news(actual_name)
         for i, news in enumerate(news_items[:3]): st.caption(f"{i+1}. {news}")
@@ -318,7 +341,6 @@ with tab1:
 with tab2:
     st.subheader("💼 현재 보유 종목 관리 및 AI 타점 진단")
     
-    # 💡 변경점: 모바일에서 깨지지 않도록 4칸을 2칸 x 2줄로 반응형 분리
     with st.form("add_stock_form"):
         col_p1, col_p2 = st.columns(2)
         with col_p1: p_name = st.text_input("종목명 (또는 코드)", "현대차")
@@ -377,7 +399,7 @@ with tab2:
             st.rerun()
 
         st.markdown("#### 🗑️ 개별 종목 삭제")
-        col_del1, col_del2 = st.columns([2, 1]) # 모바일에서 셀렉트박스를 더 넓게 배분
+        col_del1, col_del2 = st.columns([2, 1])
         with col_del1: del_target = st.selectbox("삭제할 종목 선택", ["선택 안함"] + display_df['종목명'].tolist(), label_visibility="collapsed")
         with col_del2:
             if st.button("❌ 삭제", use_container_width=True) and del_target != "선택 안함":
