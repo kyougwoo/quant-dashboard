@@ -209,7 +209,8 @@ with tab2:
 
     # 포트폴리오 현황 테이블 표시
     if not st.session_state.portfolio.empty:
-        st.markdown("### 📈 실시간 수익률 현황")
+        st.markdown("### 📈 실시간 수익률 현황 (✏️ 수정/삭제 가능)")
+        st.caption("💡 **수정:** 아래 표의 '매수단가'나 '수량' 칸을 **더블클릭(스마트폰은 터치)**하면 값을 바로 바꿀 수 있습니다.")
         
         display_df = st.session_state.portfolio.copy()
         current_prices = []
@@ -234,14 +235,47 @@ with tab2:
         display_df['수익금'] = profits
         display_df['수익률(%)'] = profit_rates
         
-        display_df_view = display_df.copy()
-        display_df_view['매수단가'] = display_df_view['매수단가'].apply(lambda x: f"{int(x):,}원")
-        display_df_view['현재가'] = display_df_view['현재가'].apply(lambda x: f"{int(x):,}원")
-        display_df_view['수익금'] = display_df_view['수익금'].apply(lambda x: f"{int(x):,}원")
-        display_df_view['수익률(%)'] = display_df_view['수익률(%)'].apply(lambda x: f"{x:.2f}%")
+        # Streamlit Data Editor로 표시 (직접 셀 수정 가능하게 설정)
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "종목명": st.column_config.TextColumn("종목명", disabled=True),
+                "매수단가": st.column_config.NumberColumn("매수단가(원)", min_value=0),
+                "수량": st.column_config.NumberColumn("수량(주)", min_value=1),
+                "현재가": st.column_config.NumberColumn("현재가(원)", disabled=True),
+                "수익금": st.column_config.NumberColumn("수익금(원)", disabled=True),
+                "수익률(%)": st.column_config.NumberColumn("수익률(%)", format="%.2f%%", disabled=True),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="portfolio_editor"
+        )
         
-        st.dataframe(display_df_view, use_container_width=True)
-        
+        # 값이 수정되었다면 세션 스테이트 즉시 업데이트
+        has_changed = False
+        for i in range(len(st.session_state.portfolio)):
+            if (st.session_state.portfolio.iloc[i]['매수단가'] != edited_df.iloc[i]['매수단가'] or 
+                st.session_state.portfolio.iloc[i]['수량'] != edited_df.iloc[i]['수량']):
+                has_changed = True
+                break
+                
+        if has_changed:
+            st.session_state.portfolio['매수단가'] = edited_df['매수단가']
+            st.session_state.portfolio['수량'] = edited_df['수량']
+            st.rerun()
+
+        # ==========================================
+        # 개별 종목 삭제 UI (스마트폰 편의성)
+        # ==========================================
+        st.markdown("#### 🗑️ 개별 종목 삭제")
+        col_del1, col_del2 = st.columns([3, 1])
+        with col_del1:
+            del_target = st.selectbox("포트폴리오에서 지울 종목을 선택하세요", ["선택 안함"] + display_df['종목명'].tolist(), label_visibility="collapsed")
+        with col_del2:
+            if st.button("❌ 삭제", use_container_width=True) and del_target != "선택 안함":
+                st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio['종목명'] != del_target]
+                st.rerun()
+
         # ==========================================
         # 💡 AI 포트폴리오 매도/홀딩 타점 진단
         # ==========================================
@@ -287,7 +321,7 @@ with tab2:
                     st.error(f"진단 중 오류 발생: {e}")
                     
         st.write("") # 간격 띄우기
-        if st.button("🗑️ 포트폴리오 전체 초기화"):
+        if st.button("🗑️ 전체 초기화 (모두 지우기)"):
             st.session_state.portfolio = pd.DataFrame(columns=['종목명', '매수단가', '수량'])
             st.rerun()
     else:
