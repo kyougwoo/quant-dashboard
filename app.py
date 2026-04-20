@@ -133,17 +133,30 @@ def get_stock_info(query):
     if query.isdigit() and len(query) == 6: return query, query
     return None, None
 
-# 💡 신규: 시가총액 상위 200종목 가져오기
+# 💡 수정됨: 시가총액 상위 200종목 가져오기 (정렬/필터링 완벽 강화)
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
         df = fdr.StockListing('KRX')
-        # 시가총액(Marcap) 기준으로 내림차순 정렬 후 상위 200개 추출
-        if 'Marcap' in df.columns:
-            df = df.sort_values('Marcap', ascending=False)
+        
+        # 1. 일반 주식(6자리 코드)만 필터링하여 스팩/ETN 등 제외
+        df['Code'] = df['Code'].astype(str).str.zfill(6)
+        df = df[df['Code'].str.match(r'^\d{6}$')]
+        
+        # 2. 시가총액 칼럼을 찾아서 안전하게 숫자로 변환 후 정렬
+        marcap_col = None
+        for col in ['Marcap', 'MarketCap', '시가총액']:
+            if col in df.columns:
+                marcap_col = col
+                break
+                
+        if marcap_col:
+            df[marcap_col] = pd.to_numeric(df[marcap_col], errors='coerce')
+            df = df.sort_values(marcap_col, ascending=False)
+            
         top_200 = df.head(200)
         return dict(zip(top_200['Name'], top_200['Code']))
-    except:
+    except Exception as e:
         return {}
 
 @st.cache_data(ttl=3600)
@@ -184,6 +197,7 @@ def get_valuation_data(ticker):
         return {"PER": 0.0, "PBR": 0.0, "Sector_PER": 0.0, "EPS": 0.0}
 
 def calculate_cloud_indicators(df):
+    # 200일선 계산을 위해 최소 200 거래일 데이터 필요 (휴일 고려 400일 로드 권장)
     if df is None or len(df) < 200: return df, {}
     
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
@@ -327,7 +341,8 @@ with tab1:
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=365)
+    # 💡 수정됨: 200일선 계산을 보장하기 위해 400일 데이터를 넉넉히 가져옴 (주말/휴일 제외시 약 260~280 거래일)
+    start_date = end_date - timedelta(days=400)
     with st.spinner("주가, 지수이평선(EMA) 및 밸류에이션 계산 중..."):
         try: 
             raw_df = fdr.DataReader(ticker, start_date, end_date)
@@ -538,7 +553,8 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=365), datetime.today())
+                            # 💡 수정됨: 포트폴리오 진단 시에도 400일 확보
+                            temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=400), datetime.today())
                             calc_df, ind = calculate_cloud_indicators(temp_df)
                             if ind:
                                 rules = ind["Cloud_Rules"]
@@ -634,10 +650,10 @@ with tab3:
         status_text = st.empty()
         
         for i, (name, code) in enumerate(search_list.items()):
-            # 진행 상태 표시 (200개일 때는 시간이 걸리므로 필수)
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=365), datetime.today())
+                # 💡 수정됨: 200일선 계산을 보장하기 위해 400일 데이터를 넉넉히 가져옴
+                temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=400), datetime.today())
                 calc_df, ind = calculate_cloud_indicators(temp_df)
                 
                 if ind:
@@ -678,8 +694,6 @@ with tab3:
             st.dataframe(res_df, use_container_width=True, hide_index=True)
             st.info("💡 **목표가 산출 근거:** 터틀 트레이딩의 손절선 폭(ATR×2) 대비 2배의 수익(ATR×4)을 기대하는 기계적 1:2 손익비 타점입니다.")
             
-            # 💡 신규: 엑셀(CSV) 리포트 다운로드 기능
-            # 한국어 깨짐 방지를 위해 utf-8-sig 인코딩 사용
             csv_data = res_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 검색 결과 엑셀(CSV) 리포트 다운로드",
