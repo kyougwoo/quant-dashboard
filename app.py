@@ -74,13 +74,6 @@ def get_stock_info(query):
         response = requests.get(url, headers=headers, timeout=5)
         items = response.json().get('items', [])
         if items and len(items[0]) > 0:
-        # 3. 네이버 증권 검색 API 우회
-    try:
-        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        response = requests.get(url, headers=headers, timeout=5)
-        items = response.json().get('items', [])
-        if items and len(items[0]) > 0:
             return items[0][0][0], items[0][0][1] # (종목명, 코드)
     except Exception: pass
     
@@ -324,7 +317,7 @@ with tab2:
                 prompt = f"""
                 당신은 냉철한 퀀트 투자 리스크 관리자입니다.
                 사용자의 현재 포트폴리오 수익률을 바탕으로 각 종목의 '매도/부분매도/홀딩/추가매수' 타점과 이유를 진단하세요.
-                최근 시장 동향과 기계적인 손절/익절 라인(예: 수익률 +10% 이상 익절, -5% 이하 기계적 손절 등)을 엄격하게 적용하여 1~2문장으로 조언하세요.
+                최근 시장 동향과 기계적인 손절/익절 라인(예: 수익률 +10% 이상 익절, -5% 이하 기계적 손절 일관성 등)을 엄격하게 적용하여 1~2문장으로 조언하세요.
                 
                 [포트폴리오 현황]
                 {pf_text}
