@@ -387,7 +387,7 @@ with tab2:
                 except Exception as e: st.error(f"오류 발생: {e}")
 
 # ------------------------------------------
-# [탭 3] 클라우드 조건 검색기 (신규!) ⭐
+# [탭 3] 클라우드 조건 검색기 (업그레이드됨: 시그널 및 목표가 추가) ⭐
 # ------------------------------------------
 with tab3:
     st.subheader("🔍 클라우드 매수 급소 스크리너")
@@ -396,7 +396,7 @@ with tab3:
     주요 종목 풀(Pool)에서 자동으로 찾아냅니다. (속도를 위해 주요 우량주 40여 개 스캔)
     """)
     
-    if st.button("🔎 조건 검색 실행", type="primary"):
+    if st.button("🔎 조건 검색 및 시그널 포착 실행", type="primary"):
         search_list = {
             "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
             "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
@@ -432,24 +432,44 @@ with tab3:
                     
                     # 4원칙 중 2개 이상 통과한 종목만 필터링
                     if score >= 2:
+                        current_price = calc_df['Close'].iloc[-1]
+                        atr_val = ind['ATR']
+                        
+                        # 💡 추가: 기계적 손익비 기반 시그널 및 목표가 계산 (손절폭 2*ATR, 수익폭 4*ATR -> 1:2 비율)
+                        stop_price = current_price - (atr_val * 2)
+                        target_price = current_price + (atr_val * 4) 
+                        
+                        # 시그널 강도 판단
+                        if score == 4:
+                            signal_text = "🔥 강력 매수"
+                        elif score == 3:
+                            signal_text = "👍 분할 매수"
+                        else:
+                            signal_text = "👀 관심/대기"
+
                         results.append({
                             "종목명": name,
+                            "매수 시그널": signal_text,
                             "통과 개수": f"{score}/4",
                             "주가 > 200일선": "✅" if rules["주가 > 200일선"] else "❌",
                             "5/15일선 정배열": "✅" if rules["5일선 15일선 돌파(골든크로스)"] else "❌",
                             "대량거래 돌파": "✅" if rules["최대 거래량 종가 돌파"] else "❌",
-                            "현재가": f"{int(calc_df['Close'].iloc[-1]):,}원",
-                            "터틀 손절가": f"{int(calc_df['Close'].iloc[-1] - (ind['ATR']*2)):,}원"
+                            "현재가": f"{int(current_price):,}원",
+                            "단기 목표가": f"{int(target_price):,}원",
+                            "터틀 손절가": f"{int(stop_price):,}원"
                         })
             except Exception:
                 pass
             progress_bar.progress((i + 1) / len(search_list))
             
-        status_text.text("✅ 스캔 완료!")
+        status_text.text("✅ 스캔 및 타점 계산 완료!")
         
         if results:
             st.success(f"조건에 맞는 유망 종목 {len(results)}개를 발견했습니다!")
             res_df = pd.DataFrame(results)
+            # 시그널(통과 개수) 우선순위로 정렬
+            res_df = res_df.sort_values(by="통과 개수", ascending=False)
             st.dataframe(res_df, use_container_width=True, hide_index=True)
+            st.info("💡 **목표가 산출 근거:** 터틀 트레이딩의 손절선 폭(ATR×2) 대비 2배의 수익(ATR×4)을 기대하는 기계적 1:2 손익비 타점입니다.")
         else:
             st.warning("현재 시장에서 클라우드 4원칙을 2개 이상 통과한 종목이 없습니다. (하락장 가능성)")
