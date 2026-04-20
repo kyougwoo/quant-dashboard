@@ -38,28 +38,50 @@ else:
 # ==========================================
 # 2. 데이터 수집 & AI 유틸리티 함수
 # ==========================================
-@st.cache_data(ttl=86400) # 종목 코드는 하루(86400초) 동안 캐싱
-def get_stock_ticker(name):
-    name = name.strip()
-    if name.isdigit() and len(name) == 6: return name
+@st.cache_data(ttl=86400) # 종목 정보 하루 동안 캐싱
+def get_stock_info(query):
+    """이름이나 코드를 입력받아 (종목명, 6자리 코드) 튜플을 반환합니다."""
+    query = str(query).strip()
+    
+    # 1. FinanceDataReader를 통해 정확한 이름/코드 찾기
+    try:
+        df_krx = fdr.StockListing('KRX')
+        if query.isdigit() and len(query) == 6:
+            match = df_krx[df_krx['Code'] == query]
+            if not match.empty: return match['Name'].values[0], query
+        else:
+            match = df_krx[df_krx['Name'] == query]
+            if not match.empty: return query, match['Code'].values[0]
+    except Exception: pass
         
+    # 2. 주요 종목 하드코딩 하이패스 (네트워크 차단 대비)
     top_stocks = {
         "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
         "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
         "셀트리온": "068270", "POSCO홀딩스": "005490", "KB금융": "105560",
         "NAVER": "035420", "네이버": "035420", "카카오": "035720", 
-        "아난티": "025980", "에코프로": "086520", "에코프로비엠": "247540"
+        "아난티": "025980", "에코프로": "086520", "에코프로비엠": "247540",
+        "앤디포스": "238090"
     }
-    if name in top_stocks: return top_stocks[name]
+    if query in top_stocks: return query, top_stocks[query]
+    for name, code in top_stocks.items():
+        if query == code: return name, code
         
+    # 3. 네이버 증권 검색 API 우회
     try:
-        url = f"https://ac.finance.naver.com/ac?q={name}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(url, headers=headers, timeout=5)
         items = response.json().get('items', [])
-        if items and len(items[0]) > 0: return items[0][0][1]
+        if items and len(items[0]) > 0:
+            return items[0][0][0], items[0][0][1] # (종목명, 코드)
     except Exception: pass
-    return None
+    
+    # 4. 모두 실패했지만 6자리 코드인 경우 임시 반환
+    if query.isdigit() and len(query) == 6:
+        return query, query
+        
+    return None, None
 
 @st.cache_data(ttl=3600) # 뉴스는 1시간 동안 캐싱
 def get_recent_news(keyword):
@@ -73,7 +95,7 @@ def get_recent_news(keyword):
     except Exception as e:
         return [f"뉴스 수집 중 오류 발생: {e}"]
 
-@st.cache_data(ttl=3600, show_spinner=False) # AI 분석 결과 1시간 캐싱 (비용/속도 최적화)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
@@ -103,12 +125,13 @@ with tab1:
         st.warning("👈 왼쪽 사이드바에 Gemini API Key를 입력해야 분석을 시작할 수 있습니다.")
         st.stop()
 
-    ticker = get_stock_ticker(stock_name)
+    # 💡 코드를 넣어도 진짜 이름을 찾아오도록 수정됨
+    actual_name, ticker = get_stock_info(stock_name)
     if not ticker:
         st.error(f"'{stock_name}'의 종목 코드를 찾을 수 없습니다.")
         st.stop()
 
-    st.subheader(f"📊 {stock_name} ({ticker}) 실시간 데이터")
+    st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -125,7 +148,7 @@ with tab1:
 
     with col2:
         st.markdown("**📰 최근 주요 뉴스 헤드라인**")
-        news_items = get_recent_news(stock_name)
+        news_items = get_recent_news(actual_name) # 진짜 이름으로 뉴스 검색
         for i, news in enumerate(news_items): st.info(f"{i+1}. {news}")
 
     # AI 분석 실행
@@ -138,7 +161,7 @@ with tab1:
                 
                 prompt = f"""
                 당신은 'Harness 3-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다. 아래 주식 데이터를 분석하세요.
-                [종목명: {stock_name}, 5일 종가: {recent_prices}, 추세: {price_trend}, 뉴스: {news_items}]
+                [종목명: {actual_name}, 5일 종가: {recent_prices}, 추세: {price_trend}, 뉴스: {news_items}]
                 [에이전트 역할]
                 1. technicalAgent: 차트/모멘텀 분석 점수(-10~10) 및 의견
                 2. fundamentalAgent: 기업/뉴스 펀더멘털 점수(-10~10) 및 의견
@@ -166,10 +189,9 @@ with tab1:
                         st.markdown(f"**권장 비중:** `{result['riskManager']['positionSize']}`")
                         st.write(result['riskManager']['reasoning'])
                     
-                    # 카톡 공유용 텍스트 생성
                     st.markdown("---")
                     st.markdown("### 💬 카카오톡 공유하기")
-                    share_text = f"""🤖 3-Agent AI 퀀트 리포트: [{stock_name}]
+                    share_text = f"""🤖 3-Agent AI 퀀트 리포트: [{actual_name}]
 
 👉 최종 판정: {result['riskManager']['action']} (권장비중: {result['riskManager']['positionSize']})
 📈 기술적 점수: {result['technicalAgent']['score']}점 / 10점
@@ -191,23 +213,24 @@ with tab2:
     st.subheader("💼 현재 보유 종목 관리 및 AI 타점 진단")
     st.markdown("내가 매수한 종목을 등록하고 실시간 수익률 확인 및 매도/홀딩 전략을 세워보세요.")
     
-    # 종목 추가 폼
     with st.form("add_stock_form"):
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-        with col_p1: p_name = st.text_input("종목명", "현대차")
+        with col_p1: p_name = st.text_input("종목명 (또는 코드)", "현대차")
         with col_p2: p_price = st.number_input("매수 단가(원)", min_value=0, step=1000)
         with col_p3: p_qty = st.number_input("수량(주)", min_value=1, step=1)
         with col_p4: 
-            st.write("") # 버튼 위치 맞추기
+            st.write("")
             st.write("")
             submitted = st.form_submit_button("➕ 종목 추가")
             
         if submitted:
-            new_row = pd.DataFrame({'종목명': [p_name], '매수단가': [p_price], '수량': [p_qty]})
+            # 추가할 때도 실제 이름을 찾아 저장
+            actual_n, _ = get_stock_info(p_name)
+            display_name = actual_n if actual_n else p_name
+            new_row = pd.DataFrame({'종목명': [display_name], '매수단가': [p_price], '수량': [p_qty]})
             st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row], ignore_index=True)
-            st.success(f"'{p_name}' 종목이 포트폴리오에 추가되었습니다!")
+            st.success(f"'{display_name}' 종목이 포트폴리오에 추가되었습니다!")
 
-    # 포트폴리오 현황 테이블 표시
     if not st.session_state.portfolio.empty:
         st.markdown("### 📈 실시간 수익률 현황 (✏️ 수정/삭제 가능)")
         st.caption("💡 **수정:** 아래 표의 '매수단가'나 '수량' 칸을 **더블클릭(스마트폰은 터치)**하면 값을 바로 바꿀 수 있습니다.")
@@ -218,10 +241,9 @@ with tab2:
         profit_rates = []
         
         for idx, row in display_df.iterrows():
-            tck = get_stock_ticker(row['종목명'])
+            actual_n, tck = get_stock_info(row['종목명'])
             cur_p = get_current_price(tck) if tck else 0
             
-            # 수익 계산
             buy_total = row['매수단가'] * row['수량']
             cur_total = cur_p * row['수량']
             profit = cur_total - buy_total
@@ -235,7 +257,6 @@ with tab2:
         display_df['수익금'] = profits
         display_df['수익률(%)'] = profit_rates
         
-        # Streamlit Data Editor로 표시 (직접 셀 수정 가능하게 설정)
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -251,7 +272,6 @@ with tab2:
             key="portfolio_editor"
         )
         
-        # 값이 수정되었다면 세션 스테이트 즉시 업데이트
         has_changed = False
         for i in range(len(st.session_state.portfolio)):
             if (st.session_state.portfolio.iloc[i]['매수단가'] != edited_df.iloc[i]['매수단가'] or 
@@ -264,9 +284,6 @@ with tab2:
             st.session_state.portfolio['수량'] = edited_df['수량']
             st.rerun()
 
-        # ==========================================
-        # 개별 종목 삭제 UI (스마트폰 편의성)
-        # ==========================================
         st.markdown("#### 🗑️ 개별 종목 삭제")
         col_del1, col_del2 = st.columns([3, 1])
         with col_del1:
@@ -276,9 +293,6 @@ with tab2:
                 st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio['종목명'] != del_target]
                 st.rerun()
 
-        # ==========================================
-        # 💡 AI 포트폴리오 매도/홀딩 타점 진단
-        # ==========================================
         st.markdown("---")
         st.markdown("### 🤖 보유 종목 AI 타점 진단")
         st.caption("현재 수익률을 바탕으로 AI 리스크 관리자가 기계적인 손절/익절/홀딩 전략을 제시합니다.")
@@ -320,7 +334,7 @@ with tab2:
                 except Exception as e:
                     st.error(f"진단 중 오류 발생: {e}")
                     
-        st.write("") # 간격 띄우기
+        st.write("") 
         if st.button("🗑️ 전체 초기화 (모두 지우기)"):
             st.session_state.portfolio = pd.DataFrame(columns=['종목명', '매수단가', '수량'])
             st.rerun()
