@@ -74,6 +74,13 @@ def get_stock_info(query):
         response = requests.get(url, headers=headers, timeout=5)
         items = response.json().get('items', [])
         if items and len(items[0]) > 0:
+        # 3. 네이버 증권 검색 API 우회
+    try:
+        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        response = requests.get(url, headers=headers, timeout=5)
+        items = response.json().get('items', [])
+        if items and len(items[0]) > 0:
             return items[0][0][0], items[0][0][1] # (종목명, 코드)
     except Exception: pass
     
@@ -85,31 +92,24 @@ def get_stock_info(query):
 
 @st.cache_data(ttl=3600) # 뉴스는 1시간 동안 캐싱
 def get_recent_news(keyword):
-    """안전한 User-Agent 장착 및 파라미터 전달 방식으로 크롤링 엔진 업그레이드"""
-    url = "https://search.naver.com/search.naver"
-    params = {
-        "where": "news",
-        "query": keyword
-    }
-    # 네이버 봇 차단 회피를 위한 완벽한 크롬 브라우저 위장
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    }
+    """네이버 차단을 완벽하게 우회하기 위해 구글 뉴스 RSS 엔진으로 교체"""
+    # 구글 뉴스 RSS URL (한국 지역/한국어 설정)
+    url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
+    
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=5)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        response = requests.get(url, timeout=5)
+        # XML 형식의 RSS 피드를 파싱
+        soup = BeautifulSoup(response.content, 'html.parser')
         
-        # 기사 제목 추출 (네이버 뉴스 기본 클래스)
-        articles = soup.select(".news_tit")
+        # 기사 아이템 추출
+        items = soup.find_all('item')
         
-        # 만약 모바일 뷰 등으로 구조가 바뀌었을 때를 대비한 플랜 B
-        if not articles:
-            articles = soup.select(".api_txt_lines.tit")
+        news_list = []
+        for item in items[:4]: # 상위 4개 추출
+            title = item.title.text if item.title else "제목 없음"
+            news_list.append(title)
             
-        news_list = [article.text.strip() for article in articles[:4]]
-        return news_list if news_list else ["최신 관련 뉴스를 찾지 못했습니다. (네이버 보안 정책)"]
+        return news_list if news_list else ["최신 관련 뉴스를 찾지 못했습니다."]
     except Exception as e:
         return [f"뉴스 수집 중 오류 발생: {e}"]
 
