@@ -8,14 +8,70 @@ from datetime import datetime, timedelta
 import json
 import pandas as pd
 import numpy as np
+import os
 
 # ==========================================
-# 1. 페이지 및 세션(포트폴리오) 초기화
+# 1. 페이지 설정 및 모바일 UI 최적화 / 영구 저장 ⭐
 # ==========================================
 st.set_page_config(page_title="클라우드 기법 퀀트 대시보드", layout="wide", page_icon="☁️")
 
+# 📱 스마트폰 모바일 화면 최적화 CSS 주입
+st.markdown("""
+<style>
+@media (max-width: 768px) {
+    .block-container {
+        padding: 1rem 1rem 2rem 1rem !important;
+    }
+    h1 {
+        font-size: 1.5rem !important;
+    }
+    h2 {
+        font-size: 1.3rem !important;
+    }
+    h3 {
+        font-size: 1.1rem !important;
+    }
+    .stButton>button {
+        width: 100% !important;
+        padding: 0.75rem !important;
+        font-weight: bold !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+    }
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.5rem !important;
+    }
+}
+/* 타이틀 옆 by 지후아빠 스타일 */
+.title-by {
+    font-size: 1rem;
+    color: #6b7280;
+    font-weight: normal;
+    vertical-align: middle;
+    margin-left: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+PORTFOLIO_FILE = 'portfolio_data.csv'
+
+def load_portfolio():
+    """저장된 포트폴리오 CSV 파일을 불러옵니다."""
+    if os.path.exists(PORTFOLIO_FILE):
+        try:
+            return pd.read_csv(PORTFOLIO_FILE)
+        except:
+            return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+    return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+
+def save_portfolio(df):
+    """포트폴리오 데이터를 CSV 파일로 영구 저장합니다."""
+    df.to_csv(PORTFOLIO_FILE, index=False)
+
+# 세션에 포트폴리오 데이터가 없으면 파일에서 읽어오기
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+    st.session_state.portfolio = load_portfolio()
 
 st.sidebar.title("⚙️ 시스템 설정")
 
@@ -34,7 +90,7 @@ else:
     stock_name = fast_search
 
 # ==========================================
-# 2. 데이터 수집 & 클라우드 기법 파이썬 수식화 ⭐
+# 2. 데이터 수집 & 클라우드 기법 파이썬 수식화
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
@@ -49,7 +105,6 @@ def get_stock_info(query):
             if not match.empty: return query, match['Code'].values[0]
     except: pass
         
-    # 속도 최적화를 위한 40여개 주요 종목 하이패스 매핑
     top_stocks = {
         "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
         "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
@@ -95,33 +150,27 @@ def get_recent_news(keyword):
         return [f"뉴스 수집 중 오류 발생: {e}"]
 
 def calculate_cloud_indicators(df):
-    """클라우드 주식 기법 (지수이평선, 거래량 기준선, 터틀 ATR) 계산"""
     if df is None or len(df) < 200: return df, {}
     
-    # 1. 지수 이동평균선 (EMA 5, 15, 50, 200) - 글로벌/클라우드 기준
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    # 2. 대량 거래량 터진 날의 종가 (지지/저항 매물대)
     recent_60_df = df.tail(60)
     max_vol_idx = recent_60_df['Volume'].idxmax()
     vol_ref_price = recent_60_df.loc[max_vol_idx, 'Close']
     df['Vol_Ref_Price'] = vol_ref_price
     
-    # 3. 터틀 트레이딩 ATR (14일 진짜 평균 변동폭) 계산
     df['H-L'] = df['High'] - df['Low']
     df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
     df['L-PC'] = abs(df['Low'] - df['Close'].shift(1))
     df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
     df['ATR'] = df['TR'].rolling(window=14).mean()
     
-    # 최근 데이터 추출
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # 클라우드 기법 5원칙 체크리스트 로직
     is_above_200 = latest['Close'] > latest['EMA200']
     is_ema_uptrend = latest['EMA200'] >= prev['EMA200']
     is_golden_cross = (prev['EMA5'] <= prev['EMA15']) and (latest['EMA5'] > latest['EMA15'])
@@ -156,7 +205,8 @@ def get_current_price(ticker):
 # ==========================================
 # 3. 메인 대시보드 UI
 # ==========================================
-st.title("☁️ 클라우드 기법 AI 퀀트 대시보드")
+# 💡 변경점: 타이틀 우측에 by 지후아빠 마크업 적용
+st.markdown("<h1>☁️ 클라우드 기법 AI 퀀트 대시보드 <span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 3-Agent 시스템")
 
 tab1, tab2, tab3 = st.tabs(["📊 개별 종목 분석", "💼 내 포트폴리오 관리", "🔍 클라우드 조건 검색기 (Screener)"])
@@ -179,7 +229,7 @@ with tab1:
 
     with col1:
         end_date = datetime.today()
-        start_date = end_date - timedelta(days=365) # 200일선 계산을 위해 1년치 로드
+        start_date = end_date - timedelta(days=365)
         with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
             try: 
                 raw_df = fdr.DataReader(ticker, start_date, end_date)
@@ -189,13 +239,12 @@ with tab1:
         if df is not None and not df.empty:
             display_df = df.tail(90)
             fig = go.Figure(data=[go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가")])
-            # 클라우드 주요 이평선 및 거래량 기준선 추가
             fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='magenta', width=1.5), name='5 EMA'))
             fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='yellow', width=1.5), name='15 EMA'))
             fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
             fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 거래량 종가 (매물대)'))
             
-            fig.update_layout(title="최근 3개월 캔들 및 클라우드 지표 (5/15/200 EMA)", xaxis_rangeslider_visible=False, height=450, margin=dict(l=0, r=0, t=40, b=0))
+            fig.update_layout(title="최근 3개월 캔들 및 클라우드 지표", xaxis_rangeslider_visible=False, height=400, margin=dict(l=0, r=0, t=40, b=0))
             st.plotly_chart(fig, use_container_width=True)
 
     with col2:
@@ -215,7 +264,6 @@ with tab1:
         news_items = get_recent_news(actual_name)
         for i, news in enumerate(news_items[:3]): st.caption(f"{i+1}. {news}")
 
-    # AI 분석 실행
     st.markdown("---")
     if df is not None and not df.empty:
         if st.button("🚀 클라우드 기법 3-Agent 분석 실행", type="primary", use_container_width=True):
@@ -223,7 +271,6 @@ with tab1:
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
-                # 클라우드 기법 맞춤형 프롬프트
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -266,25 +313,30 @@ with tab1:
                     st.error(f"오류 발생: {e}")
 
 # ------------------------------------------
-# [탭 2] 내 포트폴리오 관리 (업그레이드됨: 클라우드 진단 연동) ⭐
+# [탭 2] 내 포트폴리오 관리 (스마트폰 폼 최적화 적용 ⭐)
 # ------------------------------------------
 with tab2:
     st.subheader("💼 현재 보유 종목 관리 및 AI 타점 진단")
+    
+    # 💡 변경점: 모바일에서 깨지지 않도록 4칸을 2칸 x 2줄로 반응형 분리
     with st.form("add_stock_form"):
-        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        col_p1, col_p2 = st.columns(2)
         with col_p1: p_name = st.text_input("종목명 (또는 코드)", "현대차")
         with col_p2: p_price = st.number_input("매수 단가(원)", min_value=0, step=1000)
+        
+        col_p3, col_p4 = st.columns(2)
         with col_p3: p_qty = st.number_input("수량(주)", min_value=1, step=1)
         with col_p4: 
-            st.write(""); st.write("")
-            submitted = st.form_submit_button("➕ 종목 추가")
+            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+            submitted = st.form_submit_button("➕ 종목 추가", use_container_width=True)
             
         if submitted:
             actual_n, _ = get_stock_info(p_name)
             display_name = actual_n if actual_n else p_name
             new_row = pd.DataFrame({'종목명': [display_name], '매수단가': [p_price], '수량': [p_qty]})
             st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row], ignore_index=True)
-            st.success(f"'{display_name}' 추가 완료!")
+            save_portfolio(st.session_state.portfolio)
+            st.success(f"'{display_name}' 추가 완료 및 저장되었습니다!")
 
     if not st.session_state.portfolio.empty:
         display_df = st.session_state.portfolio.copy()
@@ -319,24 +371,28 @@ with tab2:
             if (st.session_state.portfolio.iloc[i]['매수단가'] != edited_df.iloc[i]['매수단가'] or st.session_state.portfolio.iloc[i]['수량'] != edited_df.iloc[i]['수량']):
                 has_changed = True; break
         if has_changed:
-            st.session_state.portfolio['매수단가'] = edited_df['매수단가']; st.session_state.portfolio['수량'] = edited_df['수량']
+            st.session_state.portfolio['매수단가'] = edited_df['매수단가']
+            st.session_state.portfolio['수량'] = edited_df['수량']
+            save_portfolio(st.session_state.portfolio)
             st.rerun()
 
-        col_del1, col_del2 = st.columns([3, 1])
+        st.markdown("#### 🗑️ 개별 종목 삭제")
+        col_del1, col_del2 = st.columns([2, 1]) # 모바일에서 셀렉트박스를 더 넓게 배분
         with col_del1: del_target = st.selectbox("삭제할 종목 선택", ["선택 안함"] + display_df['종목명'].tolist(), label_visibility="collapsed")
         with col_del2:
             if st.button("❌ 삭제", use_container_width=True) and del_target != "선택 안함":
-                st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio['종목명'] != del_target]; st.rerun()
+                st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio['종목명'] != del_target]
+                save_portfolio(st.session_state.portfolio)
+                st.rerun()
 
         st.markdown("---")
-        st.markdown("### 🤖 보유 종목 클라우드 타점 진단 (승률 기반)")
-        if st.button("✨ 내 포트폴리오 전체 진단받기", type="primary", use_container_width=True):
-            with st.spinner("클라우드 기법(터틀 손절선, 200일선 등)을 적용하여 포트폴리오 최적 대응 전략을 계산 중입니다..."):
+        st.markdown("### 🤖 보유 종목 클라우드 타점 진단")
+        if st.button("✨ 포트폴리오 전체 진단받기", type="primary", use_container_width=True):
+            with st.spinner("클라우드 기법(터틀 손절선, 200일선 등)을 적용하여 전략을 계산 중입니다..."):
                 pf_text = ""
                 for idx, row in display_df.iterrows():
                     actual_n, tck = get_stock_info(row['종목명'])
                     
-                    # 💡 추가: 각 포트폴리오 종목마다 클라우드 지표 즉석 계산
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
@@ -347,14 +403,11 @@ with tab2:
                                 atr_val = int(ind.get('ATR', 0))
                                 current_p = int(calc_df['Close'].iloc[-1])
                                 stop_loss = current_p - (atr_val * 2)
-                                
                                 tech_status = f"200일선 위({'O' if rules['주가 > 200일선'] else 'X'}), 5/15일선 정배열({'O' if rules['5일선 15일선 돌파(골든크로스)'] else 'X'}), 터틀손절가({stop_loss:,}원)"
-                        except:
-                            pass
+                        except: pass
                             
                     pf_text += f"- {row['종목명']}: 매수단가 {row['매수단가']}, 현재가 {row['현재가']}, 수익률 {row['수익률(%)']:.2f}%, [기술적 상태: {tech_status}]\n"
                 
-                # 💡 업그레이드: 클라우드 기법이 반영된 진단 프롬프트
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 냉철한 퀀트 투자 리스크 관리자입니다.
                 사용자의 현재 포트폴리오 수익률과 '기술적 상태(클라우드 지표 및 터틀 손절선)'를 종합하여 각 종목의 '전량매도/부분매도/홀딩/추가매수' 타점과 이유를 진단하세요.
@@ -386,8 +439,16 @@ with tab2:
                         st.info(f"**{item['stock']}** 👉 {action_color} **{item['action']}** : {item['reason']}")
                 except Exception as e: st.error(f"오류 발생: {e}")
 
+        st.write("")
+        if st.button("🗑️ 전체 초기화 (모두 지우기)", use_container_width=True):
+            st.session_state.portfolio = pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+            save_portfolio(st.session_state.portfolio)
+            st.rerun()
+    else:
+        st.info("아직 등록된 종목이 없습니다. 위 폼에서 매수하신 주식을 추가해 보세요.")
+
 # ------------------------------------------
-# [탭 3] 클라우드 조건 검색기 (업그레이드됨: 시그널 및 목표가 추가) ⭐
+# [탭 3] 클라우드 조건 검색기
 # ------------------------------------------
 with tab3:
     st.subheader("🔍 클라우드 매수 급소 스크리너")
@@ -396,7 +457,7 @@ with tab3:
     주요 종목 풀(Pool)에서 자동으로 찾아냅니다. (속도를 위해 주요 우량주 40여 개 스캔)
     """)
     
-    if st.button("🔎 조건 검색 및 시그널 포착 실행", type="primary"):
+    if st.button("🔎 조건 검색 및 시그널 포착 실행", type="primary", use_container_width=True):
         search_list = {
             "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
             "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
@@ -422,7 +483,6 @@ with tab3:
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                # 200일선 계산을 위해 1년치 데이터 가져오기
                 temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=365), datetime.today())
                 calc_df, ind = calculate_cloud_indicators(temp_df)
                 
@@ -430,22 +490,15 @@ with tab3:
                     rules = ind["Cloud_Rules"]
                     score = sum(1 for v in rules.values() if v)
                     
-                    # 4원칙 중 2개 이상 통과한 종목만 필터링
                     if score >= 2:
                         current_price = calc_df['Close'].iloc[-1]
                         atr_val = ind['ATR']
-                        
-                        # 💡 추가: 기계적 손익비 기반 시그널 및 목표가 계산 (손절폭 2*ATR, 수익폭 4*ATR -> 1:2 비율)
                         stop_price = current_price - (atr_val * 2)
                         target_price = current_price + (atr_val * 4) 
                         
-                        # 시그널 강도 판단
-                        if score == 4:
-                            signal_text = "🔥 강력 매수"
-                        elif score == 3:
-                            signal_text = "👍 분할 매수"
-                        else:
-                            signal_text = "👀 관심/대기"
+                        if score == 4: signal_text = "🔥 강력 매수"
+                        elif score == 3: signal_text = "👍 분할 매수"
+                        else: signal_text = "👀 관심/대기"
 
                         results.append({
                             "종목명": name,
@@ -467,7 +520,6 @@ with tab3:
         if results:
             st.success(f"조건에 맞는 유망 종목 {len(results)}개를 발견했습니다!")
             res_df = pd.DataFrame(results)
-            # 시그널(통과 개수) 우선순위로 정렬
             res_df = res_df.sort_values(by="통과 개수", ascending=False)
             st.dataframe(res_df, use_container_width=True, hide_index=True)
             st.info("💡 **목표가 산출 근거:** 터틀 트레이딩의 손절선 폭(ATR×2) 대비 2배의 수익(ATR×4)을 기대하는 기계적 1:2 손익비 타점입니다.")
