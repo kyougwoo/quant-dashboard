@@ -1,0 +1,6 @@
+streamlit
+finance-datareader
+beautifulsoup4
+requests
+google-generativeai
+plotly
