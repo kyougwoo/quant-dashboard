@@ -11,11 +11,10 @@ import numpy as np
 import os
 
 # ==========================================
-# 1. 페이지 설정 및 모바일 UI 최적화 / 영구 저장 ⭐
+# 1. 페이지 설정 및 모바일 UI 최적화 / 영구 저장
 # ==========================================
 st.set_page_config(page_title="클라우드 기법 퀀트 대시보드", layout="wide", page_icon="☁️")
 
-# 📱 스마트폰 모바일 화면 최적화 CSS 주입
 st.markdown("""
 <style>
 @media (max-width: 768px) {
@@ -62,7 +61,6 @@ st.markdown("""
 PORTFOLIO_FILE = 'portfolio_data.csv'
 
 def load_portfolio():
-    """저장된 포트폴리오 CSV 파일을 불러옵니다."""
     if os.path.exists(PORTFOLIO_FILE):
         try:
             return pd.read_csv(PORTFOLIO_FILE)
@@ -71,15 +69,13 @@ def load_portfolio():
     return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
 
 def save_portfolio(df):
-    """포트폴리오 데이터를 CSV 파일로 영구 저장합니다."""
     df.to_csv(PORTFOLIO_FILE, index=False)
 
-# 세션에 포트폴리오 데이터가 없으면 파일에서 읽어오기
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = load_portfolio()
 
 # ==========================================
-# 사이드바 (설정만 남김, 검색은 메인으로 이동)
+# 사이드바 설정
 # ==========================================
 st.sidebar.title("⚙️ 시스템 설정")
 
@@ -146,8 +142,34 @@ def get_recent_news(keyword):
         items = soup.find_all('item')
         news_list = [item.title.text for item in items[:5] if item.title]
         return news_list if news_list else ["최신 관련 뉴스를 찾지 못했습니다."]
-    except Exception as e:
-        return [f"뉴스 수집 중 오류 발생: {e}"]
+    except:
+        return ["뉴스 수집 중 오류 발생"]
+
+# 💡 신규: 기업 가치평가(PER/PBR) 데이터 수집 함수
+@st.cache_data(ttl=86400)
+def get_valuation_data(ticker):
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        def extract_val(selector):
+            el = soup.select_one(selector)
+            if el:
+                val = el.text.replace(',', '').strip()
+                try: return float(val)
+                except: return 0.0
+            return 0.0
+
+        per = extract_val('#_per')
+        pbr = extract_val('#_pbr')
+        cns_per = extract_val('#_cns_per')
+        eps = extract_val('#_eps')
+
+        return {"PER": per, "PBR": pbr, "Sector_PER": cns_per, "EPS": eps}
+    except:
+        return {"PER": 0.0, "PBR": 0.0, "Sector_PER": 0.0, "EPS": 0.0}
 
 def calculate_cloud_indicators(df):
     if df is None or len(df) < 200: return df, {}
@@ -183,11 +205,66 @@ def calculate_cloud_indicators(df):
         "Cloud_Rules": {
             "주가 > 200일선": is_above_200,
             "200일선 우상향": is_ema_uptrend,
-            "5일선 15일선 돌파(골든크로스)": is_golden_cross or (latest['EMA5'] > latest['EMA15']),
+            "5/15일선 정배열(돌파)": is_golden_cross or (latest['EMA5'] > latest['EMA15']),
             "최대 거래량 종가 돌파": is_above_vol_ref
         }
     }
     return df, indicators
+
+# 💡 신규: 백테스팅 시뮬레이터 함수
+def run_backtest(df):
+    trades = []
+    position = 0
+    entry_price = 0
+    entry_atr = 0
+    capital = 10000000 # 시작 원금 1천만원
+    balance = capital
+
+    for i in range(1, len(df)):
+        prev = df.iloc[i-1]
+        curr = df.iloc[i]
+
+        if pd.isna(curr['EMA200']): continue
+
+        # 포지션 없을 때: 매수 조건 (200일선 위 & 5/15일 골든크로스)
+        if position == 0:
+            if prev['EMA5'] <= prev['EMA15'] and curr['EMA5'] > curr['EMA15'] and curr['Close'] > curr['EMA200']:
+                position = 1
+                entry_price = curr['Close']
+                entry_atr = curr['ATR'] if not pd.isna(curr['ATR']) and curr['ATR'] > 0 else (curr['Close']*0.05)
+                trades.append({'date': curr.name, 'type': 'BUY', 'price': entry_price})
+        
+        # 포지션 있을 때: 매도 조건 (터틀 손절 OR 2배 익절 OR 데드크로스)
+        elif position == 1:
+            stop_loss = entry_price - (entry_atr * 2)
+            target = entry_price + (entry_atr * 4)
+            sell_price = 0
+
+            if curr['Low'] <= stop_loss:
+                sell_price = stop_loss
+            elif curr['High'] >= target:
+                sell_price = target
+            elif prev['EMA5'] >= prev['EMA15'] and curr['EMA5'] < curr['EMA15']:
+                sell_price = curr['Close']
+
+            if sell_price > 0:
+                position = 0
+                profit_pct = (sell_price - entry_price) / entry_price
+                balance = balance * (1 + profit_pct)
+                trades.append({'date': curr.name, 'type': 'SELL', 'profit_pct': profit_pct * 100, 'balance': balance})
+
+    sells = [t for t in trades if t['type'] == 'SELL']
+    wins = [t for t in sells if t['profit_pct'] > 0]
+    total_sells = len(sells)
+    win_rate = (len(wins) / total_sells * 100) if total_sells > 0 else 0
+    total_return = ((balance - capital) / capital) * 100
+
+    return {
+        'total_trades': total_sells,
+        'win_rate': win_rate,
+        'total_return': total_return,
+        'final_balance': balance
+    }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
@@ -206,9 +283,8 @@ def get_current_price(ticker):
 # 3. 메인 대시보드 UI
 # ==========================================
 st.markdown("<h1>☁️ 클라우드 기법 퀀트 대시보드<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
-st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 시스템")
+st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절, PER 밸류에이션)**가 완벽히 적용된 프리미엄 시스템")
 
-# 💡 스마트폰 겹침 방지: 검색창을 메인 화면 상단으로 분리
 st.markdown("---")
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1:
@@ -241,11 +317,12 @@ with tab1:
     
     end_date = datetime.today()
     start_date = end_date - timedelta(days=365)
-    with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
+    with st.spinner("주가, 지수이평선(EMA) 및 밸류에이션 계산 중..."):
         try: 
             raw_df = fdr.DataReader(ticker, start_date, end_date)
             df, tech_ind = calculate_cloud_indicators(raw_df)
-        except Exception: df = None; tech_ind = {}
+            val_data = get_valuation_data(ticker) # 기업 가치 데이터 수집
+        except Exception: df = None; tech_ind = {}; val_data = {"PER":0, "PBR":0, "Sector_PER":0, "EPS":0}
         
     if df is not None and not df.empty:
         display_df = df.tail(90)
@@ -255,7 +332,6 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 거래량 종가 (매물대)'))
         
-        # 💡 스마트폰 겹침 방지: 차트는 가로 전체 차지, 범례는 상단 배치
         fig.update_layout(
             title="최근 3개월 캔들 및 클라우드 지표", 
             xaxis_rangeslider_visible=False, 
@@ -265,7 +341,6 @@ with tab1:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # 💡 스마트폰 겹침 방지: 차트 밑으로 4원칙과 뉴스를 넓게 분리 배치
     st.markdown("---")
     info_col1, info_col2 = st.columns(2)
     
@@ -281,41 +356,78 @@ with tab1:
             current_p = int(df['Close'].iloc[-1])
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
+            
+        # 💡 신규: 기업 가치 평가(PER/PBR) 영역
+        st.markdown("**🏢 기업 가치 평가 (PER/PBR)**")
+        if val_data['PER'] > 0:
+            st.write(f"• **현재 PER:** {val_data['PER']}배 (업종평균: {val_data['Sector_PER']}배)")
+            st.write(f"• **현재 PBR:** {val_data['PBR']}배")
+            if val_data['Sector_PER'] > 0 and val_data['EPS'] > 0:
+                target_p = int(val_data['EPS'] * val_data['Sector_PER'])
+                st.success(f"🎯 **업종 PER 기준 적정주가:** {target_p:,}원")
+        else:
+            st.write("• 가치 평가 데이터 없음 (적자 기업 등)")
     
     with info_col2:
         st.markdown("**📰 최근 뉴스 헤드라인**")
         news_items = get_recent_news(actual_name)
-        for i, news in enumerate(news_items[:3]): st.caption(f"{i+1}. {news}")
+        for i, news in enumerate(news_items[:4]): st.caption(f"{i+1}. {news}")
+
+    # 💡 신규: 과거 3년 백테스팅 시뮬레이터 영역
+    st.markdown("---")
+    st.markdown("### ⏪ 클라우드 기법 백테스팅 시뮬레이터 (과거 3년)")
+    st.caption("과거 3년 동안 '클라우드 기법(정배열+200일선)'으로 기계적 매수하고, '터틀 손절선'으로 매도했을 때의 수익률을 검증합니다.")
+
+    if st.button("📊 백테스팅 시뮬레이션 실행", use_container_width=True):
+        with st.spinner("과거 3년치(약 750거래일) 데이터를 로드하여 시뮬레이션 중입니다..."):
+            try:
+                bt_df = fdr.DataReader(ticker, datetime.today() - timedelta(days=365*3), datetime.today())
+                bt_df, _ = calculate_cloud_indicators(bt_df)
+                stats = run_backtest(bt_df)
+
+                col_b1, col_b2, col_b3 = st.columns(3)
+                col_b1.metric("총 매매 횟수 (3년)", f"{stats['total_trades']}회")
+                col_b2.metric("기계적 매매 승률", f"{stats['win_rate']:.1f}%")
+                col_b3.metric("시뮬레이션 누적 수익률", f"{stats['total_return']:.1f}%", f"최종 {stats['final_balance']:,.0f}원 (원금 1천만)")
+
+                if stats['total_trades'] > 0:
+                    st.success("✅ 백테스팅 완료! 아래 AI 분석 시 이 승률 데이터를 참고하세요.")
+                else:
+                    st.warning("⚠️ 과거 3년간 클라우드 매수 조건(200일선 위 골든크로스)을 만족한 확실한 자리가 없었습니다.")
+            except Exception as e:
+                st.error("백테스팅 중 오류가 발생했습니다. 데이터가 충분하지 않을 수 있습니다.")
 
     st.markdown("---")
     if df is not None and not df.empty:
         if st.button("🚀 클라우드 기법 3-Agent 분석 실행", type="primary", use_container_width=True):
-            with st.spinner("클라우드 기법(매물대 돌파, 이평선 정배열)을 기반으로 타점을 계산 중입니다..."):
+            with st.spinner("클라우드 기법(매물대 돌파, 이평선 정배열)과 PER 가치평가를 기반으로 타점을 계산 중입니다..."):
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
+                # 💡 프롬프트에 기업 밸류에이션(PER/PBR) 정보 추가 주입
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
 
                 [분석 팩트 데이터]
                 - 종목명: {actual_name} (현재가: {recent_close}원)
-                - 클라우드 4원칙 통과 개수: 4개 중 {passed_rules_count}개 통과 (주가>200EMA, EMA5>15돌파, 대량거래량 종가 돌파 여부 종합)
+                - 클라우드 4원칙 통과 개수: 4개 중 {passed_rules_count}개 통과 (주가>200EMA, EMA5>15돌파, 대량거래량 돌파 여부 종합)
+                - 기업 가치평가: PER {val_data['PER']}배, PBR {val_data['PBR']}배 (현재 업종 평균 PER: {val_data['Sector_PER']}배)
                 - 터틀 트레이딩 권장 손절선: {stop_loss}원 (2*ATR 적용)
                 - 최신 뉴스 동향: {news_items}
 
                 [에이전트 규칙]
-                1. technicalAgent: '클라우드 4원칙 통과 개수'를 절대 기준으로 삼으세요. 통과 개수가 많으면 상방(매수) 점수를 높게 주고, 200일선 아래거나 거래량 매물대를 못 뚫었으면 부정적으로 평가하세요. (-10~10점)
-                2. fundamentalAgent: 뉴스의 단기적 호재/악재 스코어(-10~10) 도출.
-                3. riskManager: 위 의견 취합. '터틀 트레이딩 손절선({stop_loss}원)'을 반드시 언급하며, 기대수익과 손절폭을 비교하여 최종 포지션(적극매수/분할매수/관망/매도)을 결정하세요.
+                1. technicalAgent: '클라우드 4원칙 통과 개수'를 절대 기준으로 삼으세요. 통과 개수가 많으면 상방(매수) 점수를 높게 주고, 200일선 아래거나 역배열이면 부정적으로 평가하세요. (-10~10점)
+                2. fundamentalAgent: 뉴스 호재/악재와 '기업 가치평가(PER/PBR)'를 종합하세요. 업종 PER 대비 저평가인지 고평가인지 판단하여 점수(-10~10)를 도출하세요.
+                3. riskManager: 위 의견 취합. '터틀 트레이딩 손절선({stop_loss}원)'을 반드시 언급하며, 최종 포지션(적극매수/분할매수/관망/매도)을 결정하세요.
 
                 [출력 형식 - 순수 JSON만]
-                {{"technicalAgent": {{"score": 8, "reasoning": "200일선 위에 안착했으며 대량 거래량 종가를 돌파하여 상승 추세가 확고합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
+                {{"technicalAgent": {{"score": 8, "reasoning": "200일선 위에 안착했으며 대량 거래량 종가를 돌파하여 상승 추세가 확고합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "업종 평균 PER 대비 낮아 저평가 매력이 있습니다..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
                 """
                 
                 try:
                     result = get_ai_analysis(prompt, gemini_api_key)
-                    st.success("✅ 클라우드 기법 기반 AI 분석 완료!")
+                    st.success("✅ 클라우드 + 밸류에이션 기반 AI 분석 완료!")
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -324,7 +436,7 @@ with tab1:
                         st.write(result['technicalAgent']['reasoning'])
                     with c2:
                         st.markdown("### 📰 기본적 분석가")
-                        st.metric("펀더멘털 / 뉴스", f"{result['fundamentalAgent']['score']}점")
+                        st.metric("펀더멘털 / 밸류에이션", f"{result['fundamentalAgent']['score']}점")
                         st.write(result['fundamentalAgent']['reasoning'])
                     with c3:
                         st.markdown("### 🛡️ 리스크 관리자")
@@ -336,7 +448,7 @@ with tab1:
                     st.error(f"오류 발생: {e}")
 
 # ------------------------------------------
-# [탭 2] 내 포트폴리오 관리 (스마트폰 폼 최적화 적용 ⭐)
+# [탭 2] 내 포트폴리오 관리
 # ------------------------------------------
 with tab2:
     st.subheader("💼 현재 보유 종목 관리 및 AI 타점 진단")
