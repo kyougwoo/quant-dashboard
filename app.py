@@ -133,6 +133,19 @@ def get_stock_info(query):
     if query.isdigit() and len(query) == 6: return query, query
     return None, None
 
+# 💡 신규: 시가총액 상위 200종목 가져오기
+@st.cache_data(ttl=86400)
+def get_top_200_stocks():
+    try:
+        df = fdr.StockListing('KRX')
+        # 시가총액(Marcap) 기준으로 내림차순 정렬 후 상위 200개 추출
+        if 'Marcap' in df.columns:
+            df = df.sort_values('Marcap', ascending=False)
+        top_200 = df.head(200)
+        return dict(zip(top_200['Name'], top_200['Code']))
+    except:
+        return {}
+
 @st.cache_data(ttl=3600)
 def get_recent_news(keyword):
     url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
@@ -145,7 +158,6 @@ def get_recent_news(keyword):
     except:
         return ["뉴스 수집 중 오류 발생"]
 
-# 💡 신규: 기업 가치평가(PER/PBR) 데이터 수집 함수
 @st.cache_data(ttl=86400)
 def get_valuation_data(ticker):
     try:
@@ -211,7 +223,6 @@ def calculate_cloud_indicators(df):
     }
     return df, indicators
 
-# 💡 신규: 백테스팅 시뮬레이터 함수
 def run_backtest(df):
     trades = []
     position = 0
@@ -321,7 +332,7 @@ with tab1:
         try: 
             raw_df = fdr.DataReader(ticker, start_date, end_date)
             df, tech_ind = calculate_cloud_indicators(raw_df)
-            val_data = get_valuation_data(ticker) # 기업 가치 데이터 수집
+            val_data = get_valuation_data(ticker)
         except Exception: df = None; tech_ind = {}; val_data = {"PER":0, "PBR":0, "Sector_PER":0, "EPS":0}
         
     if df is not None and not df.empty:
@@ -357,7 +368,6 @@ with tab1:
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
             
-        # 💡 신규: 기업 가치 평가(PER/PBR) 영역
         st.markdown("**🏢 기업 가치 평가 (PER/PBR)**")
         if val_data['PER'] > 0:
             st.write(f"• **현재 PER:** {val_data['PER']}배 (업종평균: {val_data['Sector_PER']}배)")
@@ -373,7 +383,6 @@ with tab1:
         news_items = get_recent_news(actual_name)
         for i, news in enumerate(news_items[:4]): st.caption(f"{i+1}. {news}")
 
-    # 💡 신규: 과거 3년 백테스팅 시뮬레이터 영역
     st.markdown("---")
     st.markdown("### ⏪ 클라우드 기법 백테스팅 시뮬레이터 (과거 3년)")
     st.caption("과거 3년 동안 '클라우드 기법(정배열+200일선)'으로 기계적 매수하고, '터틀 손절선'으로 매도했을 때의 수익률을 검증합니다.")
@@ -404,7 +413,6 @@ with tab1:
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
-                # 💡 프롬프트에 기업 밸류에이션(PER/PBR) 정보 추가 주입
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -582,39 +590,51 @@ with tab2:
         st.info("아직 등록된 종목이 없습니다. 위 폼에서 매수하신 주식을 추가해 보세요.")
 
 # ------------------------------------------
-# [탭 3] 클라우드 조건 검색기
+# [탭 3] 클라우드 조건 검색기 (VIP 상위 200종목 + 엑셀 다운로드) ⭐
 # ------------------------------------------
 with tab3:
     st.subheader("🔍 클라우드 매수 급소 스크리너")
     st.markdown("""
     강의에서 언급된 **가장 폭발적인 상승 초입 구간(정배열 초입, 200일선 돌파, 대량거래 돌파)**을 
-    주요 종목 풀(Pool)에서 자동으로 찾아냅니다. (속도를 위해 주요 우량주 40여 개 스캔)
+    주요 종목 풀(Pool)에서 자동으로 찾아냅니다.
     """)
     
+    # 💡 스캔 모드 선택 옵션 추가
+    scan_mode = st.radio("스캔 모드 선택", ["⚡ 주요 우량주 40종목 빠른 스캔 (기본)", "💎 코스피/코스닥 시총 상위 200종목 딥 스캔 (VIP 전용)"])
+    
     if st.button("🔎 조건 검색 및 시그널 포착 실행", type="primary", use_container_width=True):
-        search_list = {
-            "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
-            "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
-            "셀트리온": "068270", "POSCO홀딩스": "005490", "KB금융": "105560",
-            "NAVER": "035420", "카카오": "035720", "에코프로": "086520",
-            "에코프로비엠": "247540", "두산에너빌리티": "034020", "HD현대미포": "010620",
-            "알테오젠": "196170", "LG화학": "051910", "삼성SDI": "006400",
-            "엔켐": "283360", "HLB": "028300", "한미반도체": "042700",
-            "크래프톤": "035760", "현대모비스": "012330", "LG전자": "066570",
-            "신한지주": "055550", "하나금융지주": "086790", "한국전력": "015760",
-            "HD한국조선해양": "009540", "HD현대중공업": "329180", "한화에어로스페이스": "012450",
-            "LIG넥스원": "079550", "현대로템": "064350", "삼양식품": "145990",
-            "아모레퍼시픽": "090430", "SK이노베이션": "096770", "포스코퓨처엠": "003670",
-            "두산로보틱스": "277810", "메리츠금융지주": "138040", "삼성물산": "028260",
-            "제주반도체": "080220", "루닛": "328130", "유니슨": "018000", 
-            "영풍": "000670", "인스코비": "006490"
-        }
+        
+        if "빠른 스캔" in scan_mode:
+            search_list = {
+                "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
+                "삼성바이오로직스": "207940", "현대차": "005380", "기아": "000270",
+                "셀트리온": "068270", "POSCO홀딩스": "005490", "KB금융": "105560",
+                "NAVER": "035420", "카카오": "035720", "에코프로": "086520",
+                "에코프로비엠": "247540", "두산에너빌리티": "034020", "HD현대미포": "010620",
+                "알테오젠": "196170", "LG화학": "051910", "삼성SDI": "006400",
+                "엔켐": "283360", "HLB": "028300", "한미반도체": "042700",
+                "크래프톤": "035760", "현대모비스": "012330", "LG전자": "066570",
+                "신한지주": "055550", "하나금융지주": "086790", "한국전력": "015760",
+                "HD한국조선해양": "009540", "HD현대중공업": "329180", "한화에어로스페이스": "012450",
+                "LIG넥스원": "079550", "현대로템": "064350", "삼양식품": "145990",
+                "아모레퍼시픽": "090430", "SK이노베이션": "096770", "포스코퓨처엠": "003670",
+                "두산로보틱스": "277810", "메리츠금융지주": "138040", "삼성물산": "028260",
+                "제주반도체": "080220", "루닛": "328130", "유니슨": "018000", 
+                "영풍": "000670", "인스코비": "006490"
+            }
+        else:
+            # 💡 시가총액 상위 200종목 가져오기
+            search_list = get_top_200_stocks()
+            if not search_list:
+                st.error("상위 200종목 데이터를 불러오지 못했습니다.")
+                st.stop()
         
         results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         for i, (name, code) in enumerate(search_list.items()):
+            # 진행 상태 표시 (200개일 때는 시간이 걸리므로 필수)
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
                 temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=365), datetime.today())
@@ -657,5 +677,17 @@ with tab3:
             res_df = res_df.sort_values(by="통과 개수", ascending=False)
             st.dataframe(res_df, use_container_width=True, hide_index=True)
             st.info("💡 **목표가 산출 근거:** 터틀 트레이딩의 손절선 폭(ATR×2) 대비 2배의 수익(ATR×4)을 기대하는 기계적 1:2 손익비 타점입니다.")
+            
+            # 💡 신규: 엑셀(CSV) 리포트 다운로드 기능
+            # 한국어 깨짐 방지를 위해 utf-8-sig 인코딩 사용
+            csv_data = res_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 검색 결과 엑셀(CSV) 리포트 다운로드",
+                data=csv_data,
+                file_name=f"cloud_quant_report_{datetime.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
         else:
             st.warning("현재 시장에서 클라우드 4원칙을 2개 이상 통과한 종목이 없습니다. (하락장 가능성)")
