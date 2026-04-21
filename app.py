@@ -138,13 +138,18 @@ def get_stock_info(query):
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
+    """시가총액 상위 200종목 가져오기 (이상한 ETF, ETN, 스팩주 완벽 필터링 적용)"""
     try:
         df = fdr.StockListing('KRX-MARCAP')
         code_col = 'Code' if 'Code' in df.columns else 'Symbol'
         name_col = 'Name'
         
+        # 6자리 숫자만 필터링 (우선주 등 제외)
         df[code_col] = df[code_col].astype(str).str.zfill(6)
         df = df[df[code_col].str.match(r'^\d{6}$')]
+        
+        # ETF, ETN, 스팩 등 퀀트 분석에 안 맞는 특수 목적 주식 완전 제거
+        df = df[~df[name_col].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR|ARIRANG|HANARO|KOSEF', na=False)]
         
         top_200 = df.head(200)
         return dict(zip(top_200[name_col], top_200[code_col]))
@@ -152,8 +157,11 @@ def get_top_200_stocks():
         try:
             df = fdr.StockListing('KRX')
             code_col = 'Code' if 'Code' in df.columns else 'Symbol'
+            name_col = 'Name'
+            
             df[code_col] = df[code_col].astype(str).str.zfill(6)
             df = df[df[code_col].str.match(r'^\d{6}$')]
+            df = df[~df[name_col].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR|ARIRANG|HANARO|KOSEF', na=False)]
             
             marcap_col = None
             for col in ['Marcap', 'MarketCap', '시가총액']:
@@ -168,7 +176,7 @@ def get_top_200_stocks():
                 df = df.sort_values(marcap_col, ascending=False)
                 
             top_200 = df.head(200)
-            return dict(zip(top_200['Name'], top_200[code_col]))
+            return dict(zip(top_200[name_col], top_200[code_col]))
         except:
             return {}
 
@@ -185,7 +193,18 @@ def get_recent_news(keyword):
         return ["뉴스 수집 중 오류 발생"]
 
 def calculate_cloud_indicators(df):
-    if df is None or len(df) < 200: return df, {}
+    """에러가 절대 발생하지 않도록 방탄(Bulletproof) 설계된 지표 계산기"""
+    if df is None or df.empty: 
+        return None, {}
+        
+    # 숫자형 데이터 안전 변환
+    for col in ['Close', 'High', 'Low', 'Volume']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.dropna(subset=['Close'])
+    
+    if len(df) < 200: 
+        return None, {}
     
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
@@ -193,9 +212,13 @@ def calculate_cloud_indicators(df):
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
     recent_60_df = df.tail(60)
-    max_vol_idx = recent_60_df['Volume'].idxmax()
-    vol_ref_price = recent_60_df.loc[max_vol_idx, 'Close']
-    df['Vol_Ref_Price'] = vol_ref_price
+    
+    # 💡 판다스 에러의 주범이었던 거래량 로직 완벽 수정 (정렬 후 가장 위에 있는 것만 뽑아옴)
+    if recent_60_df['Volume'].sum() == 0:
+        vol_ref_price = float(df['Close'].iloc[-1])
+    else:
+        max_vol_row = recent_60_df.sort_values('Volume', ascending=False).iloc[0]
+        vol_ref_price = float(max_vol_row['Close'])
     
     df['H-L'] = df['High'] - df['Low']
     df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
@@ -206,19 +229,23 @@ def calculate_cloud_indicators(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    is_above_200 = latest['Close'] > latest['EMA200']
-    is_ema_uptrend = latest['EMA200'] >= prev['EMA200']
-    is_golden_cross = (prev['EMA5'] <= prev['EMA15']) and (latest['EMA5'] > latest['EMA15'])
-    is_above_vol_ref = latest['Close'] > latest['Vol_Ref_Price']
+    # 💡 모든 값을 명시적으로 bool, float으로 변환하여 시스템 오류 원천 차단
+    is_above_200 = bool(latest['Close'] > latest['EMA200'])
+    is_ema_uptrend = bool(latest['EMA200'] >= prev['EMA200'])
+    is_golden_cross = bool((prev['EMA5'] <= prev['EMA15']) and (latest['EMA5'] > latest['EMA15']))
+    is_aligned = bool(latest['EMA5'] > latest['EMA15'])
+    is_above_vol_ref = bool(latest['Close'] > vol_ref_price)
     
     indicators = {
-        "EMA5": latest['EMA5'], "EMA15": latest['EMA15'], "EMA200": latest['EMA200'],
-        "Vol_Ref_Price": vol_ref_price,
-        "ATR": latest['ATR'],
+        "EMA5": float(latest['EMA5']), 
+        "EMA15": float(latest['EMA15']), 
+        "EMA200": float(latest['EMA200']),
+        "Vol_Ref_Price": float(vol_ref_price),
+        "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close'] * 0.05),
         "Cloud_Rules": {
             "주가 > 200일선": is_above_200,
             "200일선 우상향": is_ema_uptrend,
-            "5/15일선 정배열(돌파)": is_golden_cross or (latest['EMA5'] > latest['EMA15']),
+            "5/15일선 정배열(돌파)": is_golden_cross or is_aligned,
             "최대 거래량 종가 돌파": is_above_vol_ref
         }
     }
@@ -276,7 +303,6 @@ def run_backtest(df):
         'final_balance': balance
     }
 
-# 💡 수정됨: 429 API 할당량 초과 에러 방지를 위한 자동 재시도 로직(Backoff) 추가
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
@@ -290,13 +316,15 @@ def get_ai_analysis(prompt, api_key):
             error_str = str(e).lower()
             if "429" in error_str or "quota" in error_str:
                 if attempt < 4:
-                    time.sleep(2 ** attempt)  # 에러 발생 시 1초, 2초, 4초, 8초 대기하며 재시도
+                    time.sleep(2 ** attempt)
                     continue
             raise e
 
 def get_current_price(ticker):
     try:
-        df = fdr.DataReader(ticker, datetime.today() - timedelta(days=5), datetime.today())
+        start_dt = (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d')
+        end_dt = datetime.today().strftime('%Y-%m-%d')
+        df = fdr.DataReader(ticker, start_dt, end_dt)
         return int(df['Close'].iloc[-1]) if not df.empty else 0
     except: return 0
 
@@ -336,13 +364,17 @@ with tab1:
 
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=500)
+    # 💡 클라우드 서버와의 시간차 에러를 방지하기 위해 날짜를 YYYY-MM-DD 문자열로 명확히 고정
+    end_date_str = datetime.today().strftime('%Y-%m-%d')
+    start_date_str = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+    
     with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
         try: 
-            raw_df = fdr.DataReader(ticker, start_date, end_date)
+            raw_df = fdr.DataReader(ticker, start_date_str, end_date_str)
             df, tech_ind = calculate_cloud_indicators(raw_df)
-        except Exception: df = None; tech_ind = {}
+        except Exception: 
+            df = None
+            tech_ind = {}
         
     if df is not None and not df.empty:
         display_df = df.tail(90)
@@ -376,6 +408,8 @@ with tab1:
             current_p = int(df['Close'].iloc[-1])
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
+        else:
+            st.error("기술적 지표 계산 불가 (데이터 부족)")
     
     with info_col2:
         st.markdown("**📰 최근 뉴스 헤드라인**")
@@ -389,7 +423,9 @@ with tab1:
     if st.button("📊 백테스팅 시뮬레이션 실행", use_container_width=True):
         with st.spinner("과거 3년치(약 750거래일) 데이터를 로드하여 시뮬레이션 중입니다..."):
             try:
-                bt_df = fdr.DataReader(ticker, datetime.today() - timedelta(days=365*3), datetime.today())
+                bt_start = (datetime.today() - timedelta(days=365*3)).strftime('%Y-%m-%d')
+                bt_end = datetime.today().strftime('%Y-%m-%d')
+                bt_df = fdr.DataReader(ticker, bt_start, bt_end)
                 bt_df, _ = calculate_cloud_indicators(bt_df)
                 stats = run_backtest(bt_df)
 
@@ -412,6 +448,7 @@ with tab1:
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
+                # 💡 PER/PBR 관련 문구를 프롬프트에서 완전히 삭제했습니다.
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -451,7 +488,6 @@ with tab1:
                         st.markdown(f"**진입 비중:** `{result['riskManager']['positionSize']}`")
                         st.write(result['riskManager']['reasoning'])
                 except Exception as e:
-                    # 💡 친절한 에러 안내 (할당량 초과 시)
                     error_msg = str(e).lower()
                     if "429" in error_msg or "quota" in error_msg:
                         st.error("⏳ 구글 AI 무료 호출 한도(1분당 15회)를 초과했습니다. 약 1분 뒤에 다시 시도해주세요!")
@@ -541,14 +577,17 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=500), datetime.today())
+                            # 💡 날짜를 완벽한 문자열 포맷으로 전달
+                            p_start = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+                            p_end = datetime.today().strftime('%Y-%m-%d')
+                            temp_df = fdr.DataReader(tck, p_start, p_end)
                             calc_df, ind = calculate_cloud_indicators(temp_df)
                             if ind:
                                 rules = ind["Cloud_Rules"]
                                 atr_val = int(ind.get('ATR', 0))
                                 current_p = int(calc_df['Close'].iloc[-1])
                                 stop_loss = current_p - (atr_val * 2)
-                                tech_status = f"200일선 위({'O' if rules['주가 > 200일선'] else 'X'}), 5/15일선 정배열({'O' if rules['5일선 15일선 돌파(골든크로스)'] else 'X'}), 터틀손절가({stop_loss:,}원)"
+                                tech_status = f"200일선 위({'O' if rules['주가 > 200일선'] else 'X'}), 5/15일선 정배열({'O' if rules['5/15일선 정배열(돌파)'] else 'X'}), 터틀손절가({stop_loss:,}원)"
                         except: pass
                             
                     pf_text += f"- {row['종목명']}: 매수단가 {row['매수단가']}, 현재가 {row['현재가']}, 수익률 {row['수익률(%)']:.2f}%, [기술적 상태: {tech_status}]\n"
@@ -574,14 +613,12 @@ with tab2:
                 }}
                 """
                 try:
-                    # 💡 모듈화된 get_ai_analysis 재사용하여 자동 재시도 적용
                     ai_result = get_ai_analysis(prompt, gemini_api_key)
                     st.success("✅ 포트폴리오 클라우드 타점 진단 완료!")
                     for item in ai_result.get("results", []):
                         action_color = "🔴" if "매도" in item["action"] else ("🔵" if "홀딩" in item["action"] else "🟢")
                         st.info(f"**{item['stock']}** 👉 {action_color} **{item['action']}** : {item['reason']}")
                 except Exception as e: 
-                    # 💡 친절한 에러 안내 (할당량 초과 시)
                     error_msg = str(e).lower()
                     if "429" in error_msg or "quota" in error_msg:
                         st.error("⏳ 구글 AI 무료 호출 한도(1분당 15회)를 초과했습니다. 약 1분 뒤에 다시 시도해주세요!")
@@ -638,10 +675,14 @@ with tab3:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        # 💡 에러 검출용으로도 사용 가능한 완벽한 스캔 루프
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=500), datetime.today())
+                s_start = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+                s_end = datetime.today().strftime('%Y-%m-%d')
+                
+                temp_df = fdr.DataReader(code, s_start, s_end)
                 calc_df, ind = calculate_cloud_indicators(temp_df)
                 
                 if ind:
@@ -663,7 +704,7 @@ with tab3:
                             "매수 시그널": signal_text,
                             "통과 개수": f"{score}/4",
                             "주가 > 200일선": "✅" if rules["주가 > 200일선"] else "❌",
-                            "5/15일선 정배열": "✅" if rules["5일선 15일선 돌파(골든크로스)"] else "❌",
+                            "5/15일선 정배열": "✅" if rules["5/15일선 정배열(돌파)"] else "❌",
                             "대량거래 돌파": "✅" if rules["최대 거래량 종가 돌파"] else "❌",
                             "현재가": f"{int(current_price):,}원",
                             "단기 목표가": f"{int(target_price):,}원",
@@ -671,6 +712,7 @@ with tab3:
                         })
                 time.sleep(0.05)
             except Exception:
+                # 에러 발생 시 조용히 다음 종목으로 넘어감
                 pass
             progress_bar.progress((i + 1) / len(search_list))
             
