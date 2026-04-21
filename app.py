@@ -125,7 +125,6 @@ def get_stock_info(query):
         
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        # 💡 강력한 우회 헤더 장착으로 네이버 검색 차단 방지
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
@@ -139,7 +138,6 @@ def get_stock_info(query):
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
-    """시가총액 상위 200종목 가져오기 (정렬 및 필터링 완벽화)"""
     try:
         df = fdr.StockListing('KRX-MARCAP')
         code_col = 'Code' if 'Code' in df.columns else 'Symbol'
@@ -278,12 +276,23 @@ def run_backtest(df):
         'final_balance': balance
     }
 
+# 💡 수정됨: 429 API 할당량 초과 에러 방지를 위한 자동 재시도 로직(Backoff) 추가
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-    return json.loads(response.text)
+    
+    for attempt in range(5):
+        try:
+            response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            return json.loads(response.text)
+        except Exception as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "quota" in error_str:
+                if attempt < 4:
+                    time.sleep(2 ** attempt)  # 에러 발생 시 1초, 2초, 4초, 8초 대기하며 재시도
+                    continue
+            raise e
 
 def get_current_price(ticker):
     try:
@@ -328,7 +337,6 @@ with tab1:
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
     end_date = datetime.today()
-    # 💡 500일로 늘려서 공휴일이 많아도 무조건 거래일수 200일을 넘기도록 보장!
     start_date = end_date - timedelta(days=500)
     with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
         try: 
@@ -404,7 +412,6 @@ with tab1:
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
-                # 💡 Valuation 관련 프롬프트 내용 제거
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -444,7 +451,12 @@ with tab1:
                         st.markdown(f"**진입 비중:** `{result['riskManager']['positionSize']}`")
                         st.write(result['riskManager']['reasoning'])
                 except Exception as e:
-                    st.error(f"오류 발생: {e}")
+                    # 💡 친절한 에러 안내 (할당량 초과 시)
+                    error_msg = str(e).lower()
+                    if "429" in error_msg or "quota" in error_msg:
+                        st.error("⏳ 구글 AI 무료 호출 한도(1분당 15회)를 초과했습니다. 약 1분 뒤에 다시 시도해주세요!")
+                    else:
+                        st.error(f"오류 발생: {e}")
 
 # ------------------------------------------
 # [탭 2] 내 포트폴리오 관리
@@ -529,7 +541,6 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            # 💡 여기도 500일로 연장하여 안전하게 계산
                             temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=500), datetime.today())
                             calc_df, ind = calculate_cloud_indicators(temp_df)
                             if ind:
@@ -563,15 +574,19 @@ with tab2:
                 }}
                 """
                 try:
-                    genai.configure(api_key=gemini_api_key)
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-                    ai_result = json.loads(response.text)
+                    # 💡 모듈화된 get_ai_analysis 재사용하여 자동 재시도 적용
+                    ai_result = get_ai_analysis(prompt, gemini_api_key)
                     st.success("✅ 포트폴리오 클라우드 타점 진단 완료!")
                     for item in ai_result.get("results", []):
                         action_color = "🔴" if "매도" in item["action"] else ("🔵" if "홀딩" in item["action"] else "🟢")
                         st.info(f"**{item['stock']}** 👉 {action_color} **{item['action']}** : {item['reason']}")
-                except Exception as e: st.error(f"오류 발생: {e}")
+                except Exception as e: 
+                    # 💡 친절한 에러 안내 (할당량 초과 시)
+                    error_msg = str(e).lower()
+                    if "429" in error_msg or "quota" in error_msg:
+                        st.error("⏳ 구글 AI 무료 호출 한도(1분당 15회)를 초과했습니다. 약 1분 뒤에 다시 시도해주세요!")
+                    else:
+                        st.error(f"오류 발생: {e}")
 
         st.write("")
         if st.button("🗑️ 전체 초기화 (모두 지우기)", use_container_width=True):
@@ -626,7 +641,6 @@ with tab3:
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                # 💡 스크리너에서도 500일 넉넉히 가져오도록 변경
                 temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=500), datetime.today())
                 calc_df, ind = calculate_cloud_indicators(temp_df)
                 
