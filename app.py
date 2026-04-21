@@ -18,13 +18,15 @@ st.set_page_config(page_title="클라우드 기법 퀀트 대시보드", layout=
 
 st.markdown("""
 <style>
+/* 💡 모바일 최적화 CSS 강화: 상단 겹침 방지 및 여백 확보 */
 @media (max-width: 768px) {
     .block-container {
-        padding: 1rem 0.5rem 2rem 0.5rem !important;
+        padding: 3.5rem 0.5rem 2rem 0.5rem !important;
     }
     h1 {
         font-size: 1.4rem !important;
         margin-bottom: 10px !important;
+        line-height: 1.3 !important;
     }
     h2 {
         font-size: 1.2rem !important;
@@ -87,7 +89,7 @@ else:
     gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Google AI Studio 발급 키")
 
 # ==========================================
-# 2. 데이터 수집 & 클라우드 기법 파이썬 수식화
+# 2. 데이터 수집 & 클라우드/월봉 10선 파이썬 수식화
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
@@ -144,11 +146,8 @@ def get_top_200_stocks():
         code_col = 'Code' if 'Code' in df.columns else 'Symbol'
         name_col = 'Name'
         
-        # 6자리 숫자만 필터링 (우선주 등 제외)
         df[code_col] = df[code_col].astype(str).str.zfill(6)
         df = df[df[code_col].str.match(r'^\d{6}$')]
-        
-        # ETF, ETN, 스팩 등 퀀트 분석에 안 맞는 특수 목적 주식 완전 제거
         df = df[~df[name_col].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR|ARIRANG|HANARO|KOSEF', na=False)]
         
         top_200 = df.head(200)
@@ -193,11 +192,10 @@ def get_recent_news(keyword):
         return ["뉴스 수집 중 오류 발생"]
 
 def calculate_cloud_indicators(df):
-    """에러가 절대 발생하지 않도록 방탄(Bulletproof) 설계된 지표 계산기"""
+    """에러가 발생하지 않는 방탄 설계 + 월봉 10선(성승현 작가 기법) 추가"""
     if df is None or df.empty: 
         return None, {}
         
-    # 숫자형 데이터 안전 변환
     for col in ['Close', 'High', 'Low', 'Volume']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -206,6 +204,7 @@ def calculate_cloud_indicators(df):
     if len(df) < 200: 
         return None, {}
     
+    # 1. 일봉 클라우드 기법 
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
@@ -213,14 +212,12 @@ def calculate_cloud_indicators(df):
     
     recent_60_df = df.tail(60)
     
-    # 거래량 로직 완벽 수정 (정렬 후 가장 위에 있는 것만 뽑아옴)
     if recent_60_df['Volume'].sum() == 0:
         vol_ref_price = float(df['Close'].iloc[-1])
     else:
         max_vol_row = recent_60_df.sort_values('Volume', ascending=False).iloc[0]
         vol_ref_price = float(max_vol_row['Close'])
         
-    # 💡 FIX: 차트 에러(KeyError) 방지를 위해 df에 데이터 저장
     df['Vol_Ref_Price'] = vol_ref_price
     
     df['H-L'] = df['High'] - df['Low']
@@ -229,15 +226,30 @@ def calculate_cloud_indicators(df):
     df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
     df['ATR'] = df['TR'].rolling(window=14).mean()
     
+    # 💡 2. 월봉 10선 (Monthly 10-EMA) 계산 로직 추가
+    try:
+        # Pandas 버전에 따른 resample('ME' 또는 'M') 호환성 처리
+        try:
+            monthly_close = df['Close'].resample('ME').last()
+        except:
+            monthly_close = df['Close'].resample('M').last()
+            
+        monthly_ema10 = monthly_close.ewm(span=10, adjust=False).mean()
+        current_monthly_ema10 = float(monthly_ema10.iloc[-1])
+    except:
+        current_monthly_ema10 = float(df['EMA200'].iloc[-1]) # 계산 실패 시 200일선으로 대체
+    
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # 모든 값을 명시적으로 bool, float으로 변환하여 시스템 오류 원천 차단
     is_above_200 = bool(latest['Close'] > latest['EMA200'])
     is_ema_uptrend = bool(latest['EMA200'] >= prev['EMA200'])
     is_golden_cross = bool((prev['EMA5'] <= prev['EMA15']) and (latest['EMA5'] > latest['EMA15']))
     is_aligned = bool(latest['EMA5'] > latest['EMA15'])
     is_above_vol_ref = bool(latest['Close'] > vol_ref_price)
+    
+    # 월봉 10선 돌파 여부 확인
+    is_above_monthly_ema10 = bool(latest['Close'] > current_monthly_ema10)
     
     indicators = {
         "EMA5": float(latest['EMA5']), 
@@ -245,6 +257,8 @@ def calculate_cloud_indicators(df):
         "EMA200": float(latest['EMA200']),
         "Vol_Ref_Price": float(vol_ref_price),
         "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close'] * 0.05),
+        "Monthly_EMA10": current_monthly_ema10,
+        "Is_Above_Monthly_EMA10": is_above_monthly_ema10,
         "Cloud_Rules": {
             "주가 > 200일선": is_above_200,
             "200일선 우상향": is_ema_uptrend,
@@ -335,7 +349,7 @@ def get_current_price(ticker):
 # 3. 메인 대시보드 UI
 # ==========================================
 st.markdown("<h1>☁️ 클라우드 기법 퀀트 대시보드<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
-st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 시스템")
+st.markdown("강의 핵심 원리 **(일봉 클라우드 + 월봉 10선 + 터틀 손절)**가 완벽히 적용된 시스템")
 
 st.markdown("---")
 col_s1, col_s2 = st.columns([1, 1])
@@ -368,9 +382,10 @@ with tab1:
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
     end_date_str = datetime.today().strftime('%Y-%m-%d')
-    start_date_str = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+    # 💡 월봉 10선(약 10개월)을 여유롭게 계산하기 위해 700일치 데이터를 불러옵니다.
+    start_date_str = (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d')
     
-    with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
+    with st.spinner("주가, 클라우드 지표 및 월봉 장기추세 계산 중..."):
         try: 
             raw_df = fdr.DataReader(ticker, start_date_str, end_date_str)
             df, tech_ind = calculate_cloud_indicators(raw_df)
@@ -386,14 +401,17 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 거래량 종가 (매물대)'))
         
+        # 💡 모바일 최적화: 차트 드래그(확대/이동) 방지 처리
         fig.update_layout(
             title="최근 3개월 캔들 및 클라우드 지표", 
             xaxis_rangeslider_visible=False, 
             height=400, 
             margin=dict(l=10, r=10, t=40, b=10),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            dragmode=False # 모바일 터치 스크롤 튕김 방지
         )
-        st.plotly_chart(fig, use_container_width=True)
+        # 💡 모바일 최적화: 우측 상단의 거슬리는 도구창(ModeBar) 완전히 숨김
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     st.markdown("---")
     info_col1, info_col2 = st.columns(2)
@@ -410,6 +428,13 @@ with tab1:
             current_p = int(df['Close'].iloc[-1])
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
+            
+            # 💡 월봉 10선 장기 추세 신호등 추가
+            st.markdown("**📅 장기 추세 (성승현 작가 기법)**")
+            if tech_ind.get('Is_Above_Monthly_EMA10'):
+                st.success(f"🟢 **안전 구간** (현재가 > 월봉 10선 {int(tech_ind.get('Monthly_EMA10', 0)):,}원)")
+            else:
+                st.error(f"🔴 **저승사자 경계** (현재가 < 월봉 10선 {int(tech_ind.get('Monthly_EMA10', 0)):,}원)")
         else:
             st.error("기술적 지표 계산 불가 (데이터 부족)")
     
@@ -445,33 +470,36 @@ with tab1:
 
     st.markdown("---")
     if df is not None and not df.empty:
-        if st.button("🚀 클라우드 기법 3-Agent 분석 실행", type="primary", use_container_width=True):
-            with st.spinner("클라우드 기법(매물대 돌파, 이평선 정배열)을 기반으로 타점을 계산 중입니다..."):
+        if st.button("🚀 클라우드 3-Agent 분석 실행", type="primary", use_container_width=True):
+            with st.spinner("클라우드 단기 타점과 월봉 10선 장기 추세를 종합하여 계산 중입니다..."):
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
+                monthly_status = '안전 구간(10선 위 돌파)' if tech_ind.get('Is_Above_Monthly_EMA10') else '저승사자 캔들(10선 아래 이탈)'
                 
+                # 💡 프롬프트에 월봉 10선 지식 주입
                 prompt = f"""
-                당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
+                당신은 '클라우드 주식 기법'과 '월봉 10선 장기 추세 기법'을 마스터한 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
 
                 [분석 팩트 데이터]
                 - 종목명: {actual_name} (현재가: {recent_close}원)
-                - 클라우드 4원칙 통과 개수: 4개 중 {passed_rules_count}개 통과 (주가>200EMA, EMA5>15돌파, 대량거래량 돌파 여부 종합)
-                - 터틀 트레이딩 권장 손절선: {stop_loss}원 (2*ATR 적용)
+                - 단기 타점(클라우드 4원칙): 4개 중 {passed_rules_count}개 통과 (주가>200EMA, EMA5>15돌파, 대량거래량 돌파 등)
+                - 장기 추세(월봉 10선): {monthly_status}
+                - 터틀 트레이딩 권장 손절선: {stop_loss}원
                 - 최신 뉴스 동향: {news_items}
 
                 [에이전트 규칙]
-                1. technicalAgent: '클라우드 4원칙 통과 개수'를 절대 기준으로 삼으세요. 통과 개수가 많으면 상방(매수) 점수를 높게 주고, 200일선 아래거나 역배열이면 부정적으로 평가하세요. (-10~10점)
-                2. fundamentalAgent: 뉴스 호재/악재를 종합하세요. 단기적 호재인지 악재인지 판단하여 점수(-10~10)를 도출하세요.
-                3. riskManager: 위 의견 취합. '터틀 트레이딩 손절선({stop_loss}원)'을 반드시 언급하며, 최종 포지션(적극매수/분할매수/관망/매도)을 결정하세요.
+                1. technicalAgent: 일봉 4원칙 통과 개수와 '월봉 10선 장기 추세'를 절대 기준으로 삼으세요. 특히 월봉 10선을 이탈한 '저승사자 캔들' 상태라면 단기 타점이 좋아도 0점 이하의 부정적 점수를 주세요. (-10~10점)
+                2. fundamentalAgent: 뉴스 호재/악재를 종합하여 점수(-10~10)를 도출하세요.
+                3. riskManager: 위 의견 취합. '월봉 10선' 장기 추세를 근거로 최종 포지션(적극매수/분할매수/관망/매도)을 결정하세요. '저승사자 캔들'일 경우 강력 관망/매도를 지시하세요.
 
                 [출력 형식 - 순수 JSON만]
-                {{"technicalAgent": {{"score": 8, "reasoning": "200일선 위에 안착했으며 대량 거래량 종가를 돌파하여 상승 추세가 확고합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "호재성 뉴스가 존재하여..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
+                {{"technicalAgent": {{"score": 8, "reasoning": "월봉 10선 위에서 장기 추세를 탔으며 클라우드 단기 돌파도 완벽합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "호재성 뉴스가 존재하여..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
                 """
                 
                 try:
                     result = get_ai_analysis(prompt, gemini_api_key)
-                    st.success("✅ 클라우드 기반 AI 분석 완료!")
+                    st.success("✅ 클라우드 + 월봉 장기추세 기반 AI 분석 완료!")
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -578,7 +606,7 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            p_start = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+                            p_start = (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d')
                             p_end = datetime.today().strftime('%Y-%m-%d')
                             temp_df = fdr.DataReader(tck, p_start, p_end)
                             calc_df, ind = calculate_cloud_indicators(temp_df)
@@ -587,18 +615,20 @@ with tab2:
                                 atr_val = int(ind.get('ATR', 0))
                                 current_p = int(calc_df['Close'].iloc[-1])
                                 stop_loss = current_p - (atr_val * 2)
-                                tech_status = f"200일선 위({'O' if rules['주가 > 200일선'] else 'X'}), 5/15일선 정배열({'O' if rules['5/15일선 정배열(돌파)'] else 'X'}), 터틀손절가({stop_loss:,}원)"
+                                is_monthly_safe = 'O' if ind.get('Is_Above_Monthly_EMA10') else 'X(저승사자)'
+                                tech_status = f"월봉10선({is_monthly_safe}), 200일선 위({'O' if rules['주가 > 200일선'] else 'X'}), 5/15일선 정배열({'O' if rules['5/15일선 정배열(돌파)'] else 'X'}), 터틀손절가({stop_loss:,}원)"
                         except: pass
                             
                     pf_text += f"- {row['종목명']}: 매수단가 {row['매수단가']}, 현재가 {row['현재가']}, 수익률 {row['수익률(%)']:.2f}%, [기술적 상태: {tech_status}]\n"
                 
+                # 💡 프롬프트에 월봉 10선 지식 주입
                 prompt = f"""
-                당신은 '클라우드 주식 기법'을 마스터한 냉철한 퀀트 투자 리스크 관리자입니다.
-                사용자의 현재 포트폴리오 수익률과 '기술적 상태(클라우드 지표 및 터틀 손절선)'를 종합하여 각 종목의 '전량매도/부분매도/홀딩/추가매수' 타점과 이유를 진단하세요.
+                당신은 '클라우드 주식 기법'과 '월봉 10선 기법'을 마스터한 냉철한 퀀트 리스크 관리자입니다.
+                사용자의 현재 포트폴리오 수익률과 '기술적 상태'를 종합하여 각 종목의 '전량매도/부분매도/홀딩/추가매수' 타점과 이유를 진단하세요.
                 
                 [진단 엄격 원칙]
-                1. 수익률이 크게 났더라도 터틀 손절가를 이탈했거나 200일선 아래로 꺾인 경우 기계적인 손절/비중 축소를 강력히 경고하세요.
-                2. 기술적 상태가 정배열(O)이며 200일선 위라면 수익을 길게 끌고가는 홀딩/추가매수 의견을 낼 수 있습니다.
+                1. 기술적 상태에서 월봉 10선을 이탈한 'X(저승사자)' 캔들이 발생했다면, 장기 하락장이므로 즉시 '전량 매도'를 강력 권고하세요.
+                2. 수익률이 크게 났더라도 터틀 손절가를 이탈했거나 200일선 아래로 꺾인 경우 기계적인 손절/비중 축소를 경고하세요.
                 3. 감정을 배제하고 냉정하게 1~2문장으로 조언하세요.
                 
                 [포트폴리오 현황]
@@ -608,13 +638,13 @@ with tab2:
                 {{
                   "results": [
                     {{"stock": "종목명", "action": "부분매도", "reason": "수익률 10% 도달 및 5/15일선 역배열 전환 우려로 절반 익절을 권장합니다."}},
-                    {{"stock": "종목명", "action": "전량매도", "reason": "현재가가 터틀 손절가를 이탈하였으므로 원칙에 따라 즉시 전량 매도해야 합니다."}}
+                    {{"stock": "종목명", "action": "전량매도", "reason": "월봉 10선을 이탈한 저승사자 캔들이 확인되어 즉시 매도해야 합니다."}}
                   ]
                 }}
                 """
                 try:
                     ai_result = get_ai_analysis(prompt, gemini_api_key)
-                    st.success("✅ 포트폴리오 클라우드 타점 진단 완료!")
+                    st.success("✅ 포트폴리오 클라우드 + 월봉 장기추세 진단 완료!")
                     for item in ai_result.get("results", []):
                         action_color = "🔴" if "매도" in item["action"] else ("🔵" if "홀딩" in item["action"] else "🟢")
                         st.info(f"**{item['stock']}** 👉 {action_color} **{item['action']}** : {item['reason']}")
@@ -639,8 +669,8 @@ with tab2:
 with tab3:
     st.subheader("🔍 클라우드 매수 급소 스크리너")
     st.markdown("""
-    강의에서 언급된 **가장 폭발적인 상승 초입 구간(정배열 초입, 200일선 돌파, 대량거래 돌파)**을 
-    주요 종목 풀(Pool)에서 자동으로 찾아냅니다.
+    강의에서 언급된 **가장 폭발적인 상승 초입 구간(정배열 초입, 200일선 돌파, 대량거래 돌파)**을 자동으로 찾아냅니다. 
+    *(월봉 10선 아래에 위치한 '저승사자' 종목은 안전을 위해 검색에서 자동 제외됩니다.)*
     """)
     
     scan_mode = st.radio("스캔 모드 선택", ["⚡ 주요 우량주 40종목 빠른 스캔 (기본)", "💎 코스피/코스닥 시총 상위 200종목 딥 스캔 (VIP 전용)"])
@@ -678,7 +708,7 @@ with tab3:
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                s_start = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
+                s_start = (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d')
                 s_end = datetime.today().strftime('%Y-%m-%d')
                 
                 temp_df = fdr.DataReader(code, s_start, s_end)
@@ -687,8 +717,10 @@ with tab3:
                 if ind:
                     rules = ind["Cloud_Rules"]
                     score = sum(1 for v in rules.values() if v)
+                    is_monthly_safe = ind.get("Is_Above_Monthly_EMA10", False)
                     
-                    if score >= 2:
+                    # 💡 월봉 10선 철벽 방어 필터: 장기 추세가 꺾인(False) 종목은 점수가 높아도 무조건 탈락!
+                    if score >= 2 and is_monthly_safe:
                         current_price = calc_df['Close'].iloc[-1]
                         atr_val = ind['ATR']
                         stop_price = current_price - (atr_val * 2)
@@ -702,6 +734,7 @@ with tab3:
                             "종목명": name,
                             "매수 시그널": signal_text,
                             "통과 개수": f"{score}/4",
+                            "월봉 장기추세": "🟢 안전",
                             "주가 > 200일선": "✅" if rules["주가 > 200일선"] else "❌",
                             "5/15일선 정배열": "✅" if rules["5/15일선 정배열(돌파)"] else "❌",
                             "대량거래 돌파": "✅" if rules["최대 거래량 종가 돌파"] else "❌",
@@ -717,11 +750,11 @@ with tab3:
         status_text.text("✅ 스캔 및 타점 계산 완료!")
         
         if results:
-            st.success(f"조건에 맞는 유망 종목 {len(results)}개를 발견했습니다!")
+            st.success(f"조건에 맞는 유망 종목 {len(results)}개를 발견했습니다! (월봉 10선 이탈 종목 필터링 됨)")
             res_df = pd.DataFrame(results)
             res_df = res_df.sort_values(by="통과 개수", ascending=False)
             st.dataframe(res_df, use_container_width=True, hide_index=True)
-            st.info("💡 **목표가 산출 근거:** 터틀 트레이딩의 손절선 폭(ATR×2) 대비 2배의 수익(ATR×4)을 기대하는 기계적 1:2 손익비 타점입니다.")
+            st.info("💡 **목표가 및 필터링 산출 근거:** 월봉 10선 아래에 있는 하락장 종목은 스크리닝에서 완전히 제외(철벽 방어)했으며, 터틀 트레이딩 1:2 손익비를 적용했습니다.")
             
             csv_data = res_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
@@ -732,4 +765,4 @@ with tab3:
                 use_container_width=True
             )
         else:
-            st.warning("현재 시장에서 클라우드 4원칙을 2개 이상 통과한 종목이 없습니다. (하락장 가능성)")
+            st.warning("현재 시장에서 월봉 10선 위이면서 클라우드 4원칙을 만족하는 종목이 하나도 없습니다. (장기 하락/조정장 극도로 주의)")
