@@ -213,12 +213,15 @@ def calculate_cloud_indicators(df):
     
     recent_60_df = df.tail(60)
     
-    # 💡 판다스 에러의 주범이었던 거래량 로직 완벽 수정 (정렬 후 가장 위에 있는 것만 뽑아옴)
+    # 거래량 로직 완벽 수정 (정렬 후 가장 위에 있는 것만 뽑아옴)
     if recent_60_df['Volume'].sum() == 0:
         vol_ref_price = float(df['Close'].iloc[-1])
     else:
         max_vol_row = recent_60_df.sort_values('Volume', ascending=False).iloc[0]
         vol_ref_price = float(max_vol_row['Close'])
+        
+    # 💡 FIX: 차트 에러(KeyError) 방지를 위해 df에 데이터 저장
+    df['Vol_Ref_Price'] = vol_ref_price
     
     df['H-L'] = df['High'] - df['Low']
     df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
@@ -229,7 +232,7 @@ def calculate_cloud_indicators(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # 💡 모든 값을 명시적으로 bool, float으로 변환하여 시스템 오류 원천 차단
+    # 모든 값을 명시적으로 bool, float으로 변환하여 시스템 오류 원천 차단
     is_above_200 = bool(latest['Close'] > latest['EMA200'])
     is_ema_uptrend = bool(latest['EMA200'] >= prev['EMA200'])
     is_golden_cross = bool((prev['EMA5'] <= prev['EMA15']) and (latest['EMA5'] > latest['EMA15']))
@@ -364,7 +367,6 @@ with tab1:
 
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
-    # 💡 클라우드 서버와의 시간차 에러를 방지하기 위해 날짜를 YYYY-MM-DD 문자열로 명확히 고정
     end_date_str = datetime.today().strftime('%Y-%m-%d')
     start_date_str = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
     
@@ -448,7 +450,6 @@ with tab1:
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
-                # 💡 PER/PBR 관련 문구를 프롬프트에서 완전히 삭제했습니다.
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -577,7 +578,6 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            # 💡 날짜를 완벽한 문자열 포맷으로 전달
                             p_start = (datetime.today() - timedelta(days=500)).strftime('%Y-%m-%d')
                             p_end = datetime.today().strftime('%Y-%m-%d')
                             temp_df = fdr.DataReader(tck, p_start, p_end)
@@ -675,7 +675,6 @@ with tab3:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 💡 에러 검출용으로도 사용 가능한 완벽한 스캔 루프
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
@@ -712,7 +711,6 @@ with tab3:
                         })
                 time.sleep(0.05)
             except Exception:
-                # 에러 발생 시 조용히 다음 종목으로 넘어감
                 pass
             progress_bar.progress((i + 1) / len(search_list))
             
