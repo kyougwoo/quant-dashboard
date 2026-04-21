@@ -229,7 +229,6 @@ def calculate_cloud_indicators(df):
     
     # 💡 2. 월봉 10선 (Monthly 10-EMA) 계산 로직 추가
     try:
-        # Pandas 버전에 따른 resample('ME' 또는 'M') 호환성 처리
         try:
             monthly_close = df['Close'].resample('ME').last()
         except:
@@ -238,7 +237,7 @@ def calculate_cloud_indicators(df):
         monthly_ema10 = monthly_close.ewm(span=10, adjust=False).mean()
         current_monthly_ema10 = float(monthly_ema10.iloc[-1])
     except:
-        current_monthly_ema10 = float(df['EMA200'].iloc[-1]) # 계산 실패 시 200일선으로 대체
+        current_monthly_ema10 = float(df['EMA200'].iloc[-1])
     
     latest = df.iloc[-1]
     prev = df.iloc[-2]
@@ -249,7 +248,6 @@ def calculate_cloud_indicators(df):
     is_aligned = bool(latest['EMA5'] > latest['EMA15'])
     is_above_vol_ref = bool(latest['Close'] > vol_ref_price)
     
-    # 월봉 10선 돌파 여부 확인
     is_above_monthly_ema10 = bool(latest['Close'] > current_monthly_ema10)
     
     indicators = {
@@ -321,7 +319,7 @@ def run_backtest(df):
         'final_balance': balance
     }
 
-# 💡 AI 호출 무적의 방탄 코드 적용: 한도 초과 시 자동으로 33초 등 필요 시간만큼 대기 후 재시도
+# 💡 복구 완료: AI 호출 무적의 방탄 코드 적용 (잘림 현상 수정본)
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
@@ -332,5 +330,5 @@ def get_ai_analysis(prompt, api_key):
             response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
             text = response.text.strip()
             
-            # AI가 가끔 JSON 형식을 어기고 마크다운(```json)을 씌워서 주는 버그 원천 차단
+            # AI가 가끔 JSON 형식을 어기고 마크다운을 씌워서 주는 버그 원천 차단
             if text.startswith("
