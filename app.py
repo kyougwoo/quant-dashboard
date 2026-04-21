@@ -125,7 +125,10 @@ def get_stock_info(query):
         
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        # 💡 강력한 우회 헤더 장착으로 네이버 검색 차단 방지
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
         response = requests.get(url, headers=headers, timeout=5)
         items = response.json().get('items', [])
         if items and len(items[0]) > 0: return items[0][0][0], items[0][0][1]
@@ -182,31 +185,6 @@ def get_recent_news(keyword):
         return news_list if news_list else ["최신 관련 뉴스를 찾지 못했습니다."]
     except:
         return ["뉴스 수집 중 오류 발생"]
-
-@st.cache_data(ttl=86400)
-def get_valuation_data(ticker):
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-
-        def extract_val(selector):
-            el = soup.select_one(selector)
-            if el:
-                val = el.text.replace(',', '').strip()
-                try: return float(val)
-                except: return 0.0
-            return 0.0
-
-        per = extract_val('#_per')
-        pbr = extract_val('#_pbr')
-        cns_per = extract_val('#_cns_per')
-        eps = extract_val('#_eps')
-
-        return {"PER": per, "PBR": pbr, "Sector_PER": cns_per, "EPS": eps}
-    except:
-        return {"PER": 0.0, "PBR": 0.0, "Sector_PER": 0.0, "EPS": 0.0}
 
 def calculate_cloud_indicators(df):
     if df is None or len(df) < 200: return df, {}
@@ -317,7 +295,7 @@ def get_current_price(ticker):
 # 3. 메인 대시보드 UI
 # ==========================================
 st.markdown("<h1>☁️ 클라우드 기법 퀀트 대시보드<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
-st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절, PER 밸류에이션)**가 완벽히 적용된 프리미엄 시스템")
+st.markdown("강의 핵심 원리 **(EMA 5/15/200, 거래량 매물대 돌파, 터틀 ATR 손절)**가 완벽히 적용된 시스템")
 
 st.markdown("---")
 col_s1, col_s2 = st.columns([1, 1])
@@ -350,13 +328,13 @@ with tab1:
     st.subheader(f"📊 {actual_name} ({ticker}) 실시간 데이터")
     
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=400)
-    with st.spinner("주가, 지수이평선(EMA) 및 밸류에이션 계산 중..."):
+    # 💡 500일로 늘려서 공휴일이 많아도 무조건 거래일수 200일을 넘기도록 보장!
+    start_date = end_date - timedelta(days=500)
+    with st.spinner("주가 및 지수이평선(EMA) 계산 중..."):
         try: 
             raw_df = fdr.DataReader(ticker, start_date, end_date)
             df, tech_ind = calculate_cloud_indicators(raw_df)
-            val_data = get_valuation_data(ticker)
-        except Exception: df = None; tech_ind = {}; val_data = {"PER":0, "PBR":0, "Sector_PER":0, "EPS":0}
+        except Exception: df = None; tech_ind = {}
         
     if df is not None and not df.empty:
         display_df = df.tail(90)
@@ -390,16 +368,6 @@ with tab1:
             current_p = int(df['Close'].iloc[-1])
             stop_loss = current_p - (atr_val * 2)
             st.info(f"🛡️ **터틀 스탑(손절가):** {stop_loss:,}원\n*(현재가 - ATR×2 적용)*")
-            
-        st.markdown("**🏢 기업 가치 평가 (PER/PBR)**")
-        if val_data['PER'] > 0:
-            st.write(f"• **현재 PER:** {val_data['PER']}배 (업종평균: {val_data['Sector_PER']}배)")
-            st.write(f"• **현재 PBR:** {val_data['PBR']}배")
-            if val_data['Sector_PER'] > 0 and val_data['EPS'] > 0:
-                target_p = int(val_data['EPS'] * val_data['Sector_PER'])
-                st.success(f"🎯 **업종 PER 기준 적정주가:** {target_p:,}원")
-        else:
-            st.write("• 가치 평가 데이터 없음 (적자 기업 등)")
     
     with info_col2:
         st.markdown("**📰 최근 뉴스 헤드라인**")
@@ -432,10 +400,11 @@ with tab1:
     st.markdown("---")
     if df is not None and not df.empty:
         if st.button("🚀 클라우드 기법 3-Agent 분석 실행", type="primary", use_container_width=True):
-            with st.spinner("클라우드 기법(매물대 돌파, 이평선 정배열)과 PER 가치평가를 기반으로 타점을 계산 중입니다..."):
+            with st.spinner("클라우드 기법(매물대 돌파, 이평선 정배열)을 기반으로 타점을 계산 중입니다..."):
                 recent_close = int(df['Close'].iloc[-1])
                 passed_rules_count = sum(1 for v in rules.values() if v)
                 
+                # 💡 Valuation 관련 프롬프트 내용 제거
                 prompt = f"""
                 당신은 '클라우드 주식 기법'을 마스터한 월스트리트 상위 1% 퀀트 트레이더입니다.
                 아래 데이터를 바탕으로 종목을 분석하세요.
@@ -443,22 +412,21 @@ with tab1:
                 [분석 팩트 데이터]
                 - 종목명: {actual_name} (현재가: {recent_close}원)
                 - 클라우드 4원칙 통과 개수: 4개 중 {passed_rules_count}개 통과 (주가>200EMA, EMA5>15돌파, 대량거래량 돌파 여부 종합)
-                - 기업 가치평가: PER {val_data['PER']}배, PBR {val_data['PBR']}배 (현재 업종 평균 PER: {val_data['Sector_PER']}배)
                 - 터틀 트레이딩 권장 손절선: {stop_loss}원 (2*ATR 적용)
                 - 최신 뉴스 동향: {news_items}
 
                 [에이전트 규칙]
                 1. technicalAgent: '클라우드 4원칙 통과 개수'를 절대 기준으로 삼으세요. 통과 개수가 많으면 상방(매수) 점수를 높게 주고, 200일선 아래거나 역배열이면 부정적으로 평가하세요. (-10~10점)
-                2. fundamentalAgent: 뉴스 호재/악재와 '기업 가치평가(PER/PBR)'를 종합하세요. 업종 PER 대비 저평가인지 고평가인지 판단하여 점수(-10~10)를 도출하세요.
+                2. fundamentalAgent: 뉴스 호재/악재를 종합하세요. 단기적 호재인지 악재인지 판단하여 점수(-10~10)를 도출하세요.
                 3. riskManager: 위 의견 취합. '터틀 트레이딩 손절선({stop_loss}원)'을 반드시 언급하며, 최종 포지션(적극매수/분할매수/관망/매도)을 결정하세요.
 
                 [출력 형식 - 순수 JSON만]
-                {{"technicalAgent": {{"score": 8, "reasoning": "200일선 위에 안착했으며 대량 거래량 종가를 돌파하여 상승 추세가 확고합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "업종 평균 PER 대비 낮아 저평가 매력이 있습니다..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
+                {{"technicalAgent": {{"score": 8, "reasoning": "200일선 위에 안착했으며 대량 거래량 종가를 돌파하여 상승 추세가 확고합니다."}}, "fundamentalAgent": {{"score": 6, "reasoning": "호재성 뉴스가 존재하여..."}}, "riskManager": {{"action": "분할매수", "positionSize": "20%", "reasoning": "터틀 스탑 기준 ...원을 손절선으로 잡고..."}}}}
                 """
                 
                 try:
                     result = get_ai_analysis(prompt, gemini_api_key)
-                    st.success("✅ 클라우드 + 밸류에이션 기반 AI 분석 완료!")
+                    st.success("✅ 클라우드 기반 AI 분석 완료!")
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -467,7 +435,7 @@ with tab1:
                         st.write(result['technicalAgent']['reasoning'])
                     with c2:
                         st.markdown("### 📰 기본적 분석가")
-                        st.metric("펀더멘털 / 밸류에이션", f"{result['fundamentalAgent']['score']}점")
+                        st.metric("펀더멘털 / 뉴스", f"{result['fundamentalAgent']['score']}점")
                         st.write(result['fundamentalAgent']['reasoning'])
                     with c3:
                         st.markdown("### 🛡️ 리스크 관리자")
@@ -561,7 +529,8 @@ with tab2:
                     tech_status = "지표 계산 불가"
                     if tck:
                         try:
-                            temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=400), datetime.today())
+                            # 💡 여기도 500일로 연장하여 안전하게 계산
+                            temp_df = fdr.DataReader(tck, datetime.today() - timedelta(days=500), datetime.today())
                             calc_df, ind = calculate_cloud_indicators(temp_df)
                             if ind:
                                 rules = ind["Cloud_Rules"]
@@ -657,7 +626,8 @@ with tab3:
         for i, (name, code) in enumerate(search_list.items()):
             status_text.text(f"스캔 중... {name} ({i+1}/{len(search_list)})")
             try:
-                temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=400), datetime.today())
+                # 💡 스크리너에서도 500일 넉넉히 가져오도록 변경
+                temp_df = fdr.DataReader(code, datetime.today() - timedelta(days=500), datetime.today())
                 calc_df, ind = calculate_cloud_indicators(temp_df)
                 
                 if ind:
@@ -685,7 +655,6 @@ with tab3:
                             "단기 목표가": f"{int(target_price):,}원",
                             "터틀 손절가": f"{int(stop_price):,}원"
                         })
-                # 💡 차단 방지를 위한 0.05초 대기 
                 time.sleep(0.05)
             except Exception:
                 pass
