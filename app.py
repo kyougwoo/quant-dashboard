@@ -286,7 +286,7 @@ def get_top_200_stocks():
             "카카오":"035720", "LG화학":"051910", "메리츠금융지주":"138040", "삼성SDI":"006400", "삼성생명":"032830", 
             "한국전력":"015760", "HD현대중공업":"329180", "크래프톤":"259960", "포스코퓨처엠":"003670", "하이브":"352820", 
             "삼성화재":"000810", "KT&G":"033780", "우리금융지주":"316140", "HD한국조선해양":"009540", "기업은행":"024110", 
-            "고려아연":"010130", "두산에너빌리티":"034020", "KT":"030200", "한화에어로스페이스":"012450", "SK텔 검":"017670", 
+            "고려아연":"010130", "두산에너빌리티":"034020", "KT":"030200", "한화에어로스페이스":"012450", "SK텔레콤":"017670", 
             "삼성전기":"009150", "LG전자":"066570", "SK":"034730", "카카오뱅크":"323410", "삼성에스디에스":"018260", 
             "현대글로비스":"086280", "엔씨소프트":"036570", "LG생활건강":"051900", "대한항공":"003490", "아모레퍼시픽":"090430", 
             "LG":"003550", "현대제철":"004020", "SK이노베이션":"096770", "CJ제일제당":"097950", "한화솔루션":"009830", 
@@ -551,12 +551,11 @@ with tab2:
             p = get_current_price(tck) if tck else 0.0
             prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             prices.append(p); profs.append(prof); rates.append(rate)
-        dis_df['현재가'] = prices; dis_df['수익금'] = profs; 단수익률 = rates
-        dis_df['수익률(%)'] = rates
+        dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         
         edt_df = st.data_editor(dis_df, column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
         
-        # 💡 [버그 수정] 무한 깜빡임(무한 새로고침) 완벽 해결 - 문자열로 변환하여 미세한 오차 차단
+        # 💡 [버그 수정] 무한 깜빡임 완벽 해결
         orig_vals = st.session_state.portfolio[['매수단가', '수량']].fillna(0).values.tolist()
         new_vals = edt_df[['매수단가', '수량']].fillna(0).values.tolist()
         
@@ -579,23 +578,44 @@ with tab2:
                         if tck:
                             try:
                                 df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
-                                if ind: stat = f"월봉10선({'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}), 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
+                                if ind: stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, 200일선={'돌파' if ind['Cloud_Rules']['주가 > 200일선'] else '이탈'}"
                             except: pass
-                        txt += f"- {r['종목명']}: 수익 {r['수익률(%)']:.2f}%, 상태: {stat}\n"
+                        txt += f"- [{r['종목명']}] 수익률: {r['수익률(%)']:.2f}%, 상태: {stat}\n"
                     
+                    # 💡 [진단 버그 해결] AI가 형식을 헷갈리지 않도록 명확한 JSON 구조로 프롬프트 전면 수정
+                    diag_prompt = f"""
+                    당신은 최고 수준의 퀀트 투자 전략가입니다.
+                    아래 [포트폴리오]에 포함된 개별 종목들의 상태를 정밀하게 진단해주세요.
+                    * 월봉10선이 '위험'인 종목은 전량매도를 적극 권고해주세요.
+
+                    [포트폴리오 보유 종목 데이터]
+                    {txt}
+
+                    [출력 형식 (반드시 유효한 JSON 형식으로 응답)]
+                    {{
+                      "results": [
+                        {{
+                          "stock": "종목명",
+                          "action": "매수 / 관망 / 매도 중 택 1",
+                          "reason": "해당 판단을 내린 구체적인 이유 1~2문장"
+                        }}
+                      ]
+                    }}
+                    """
                     try:
-                        res = get_ai_analysis(f"월봉10선 위험이면 전량매도 권고해. [포트폴리오]\n{txt}\n응답: {{\"results\": [{{\"stock\": \"명\", \"action\": \"매도\", \"reason\": \"...\"}}]}}", gemini_api_key)
-                        for i in res.get("results", []): st.info(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                    except Exception as e: st.error(f"오류: {e}")
+                        res = get_ai_analysis(diag_prompt, gemini_api_key)
+                        for i in res.get("results", []): 
+                            action = i.get('action', '')
+                            if "매수" in action: st.success(f"**{i['stock']}** 👉 **{action}** : {i['reason']}")
+                            elif "매도" in action: st.error(f"**{i['stock']}** 👉 **{action}** : {i['reason']}")
+                            else: st.warning(f"**{i['stock']}** 👉 **{action}** : {i['reason']}")
+                    except Exception as e: st.error(f"진단 오류: {e}")
 
         with btn_col2:
             if st.button("🌅 오늘의 모닝 브리핑 생성", type="primary", use_container_width=True):
                 with st.spinner("밤사이 글로벌 증시 동향과 보유 포트폴리오를 종합 분석 중입니다... (약 15~30초 소요)"):
                     try:
-                        # 1. 글로벌/국내 시장 뉴스 수집
                         market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
-                        
-                        # 2. 포트폴리오 보유 종목들의 최신 지표 싹쓸이
                         portfolio_context = ""
                         for _, r in dis_df.iterrows():
                             name = r['종목명']
@@ -614,7 +634,6 @@ with tab2:
                                 except: pass
                             portfolio_context += f"- [{name}] 현재수익률: {profit:.2f}%, 터틀손절가: {format_price(stop_loss_val, tck)}, 지표상태: {stat}, 최근뉴스: {news_list}\n"
                         
-                        # 3. AI에게 모닝 브리핑 작성을 지시하는 프롬프트
                         briefing_prompt = f"""
                         당신은 최고 수준의 글로벌 퀀트 투자 전략가입니다.
                         사용자의 전체 포트폴리오와 간밤의 시장 뉴스 데이터를 바탕으로 '오늘의 포트폴리오 대응 전략 (모닝 브리핑)'을 작성해주세요.
@@ -640,10 +659,7 @@ with tab2:
                         """
                         
                         res = get_ai_analysis(briefing_prompt, gemini_api_key)
-                        
-                        # 4. 브리핑 결과 예쁘게 출력하기
                         st.success("✅ 굿모닝! 오늘의 브리핑이 도착했습니다.")
-                        
                         st.markdown("### 🌐 밤사이 시장 동향 (Market Overview)")
                         st.info(res.get("market_overview", "시장 동향을 불러오지 못했습니다."))
                         
@@ -651,19 +667,22 @@ with tab2:
                         for stock in res.get("stock_briefings", []):
                             alert_level = stock.get("alert_level", "🟡 주의")
                             strategy = stock.get("strategy", "")
-                            
-                            if "안전" in alert_level:
-                                st.success(f"**{stock['stock']}** ({alert_level}) : {strategy}")
-                            elif "위험" in alert_level:
-                                st.error(f"**{stock['stock']}** ({alert_level}) : {strategy}")
-                            else:
-                                st.warning(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                            if "안전" in alert_level: st.success(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                            elif "위험" in alert_level: st.error(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                            else: st.warning(f"**{stock['stock']}** ({alert_level}) : {strategy}")
                                 
                         st.markdown("### 💡 핵심 행동 지침 (Action Plan)")
                         st.markdown(f"> **{res.get('action_plan', '')}**")
                         
-                    except Exception as e: 
-                        st.error(f"브리핑 생성 중 오류가 발생했습니다: {e}")
+                        if tele_token and tele_chat_id:
+                            briefing_msg = f"🌅 <b>오늘의 모닝 브리핑</b>\n\n🌐 <b>시장 동향</b>\n{res.get('market_overview', '내용 없음')}\n\n🎯 <b>종목별 대응 전략</b>\n"
+                            for stock in res.get("stock_briefings", []):
+                                briefing_msg += f"- <b>{stock['stock']}</b> ({stock.get('alert_level', '')}): {stock.get('strategy', '')}\n"
+                            briefing_msg += f"\n💡 <b>핵심 지침:</b> {res.get('action_plan', '')}"
+                            send_telegram_message(tele_token, tele_chat_id, briefing_msg)
+                            st.toast("📱 텔레그램으로 모닝 브리핑이 전송되었습니다!")
+                            
+                    except Exception as e: st.error(f"브리핑 생성 중 오류가 발생했습니다: {e}")
                     
         if st.button("🗑️ 선택 삭제"): st.warning("수량을 0으로 만들면 삭제됩니다.")
     else: st.info("등록된 종목이 없습니다.")
@@ -741,19 +760,32 @@ with tab3:
             
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             
+            # 💡 [버그 수정 & 업그레이드] 텔레그램 글자 수 제한(4096자)을 회피하는 스마트 분할 전송
             if send_to_telegram and tele_token and tele_chat_id:
-                msg_text = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
-                for r in res[:10]:
-                    msg_text += f"<b>{r['종목명']}</b> ({r['매수 시그널']})\n"
-                    msg_text += f"- 통과: {r['통과 개수']} | 통화: {r['통화']}\n"
-                    msg_text += f"- 현재가: {r['현재가']:,.2f} | 목표: {r['목표가']:,.2f}\n\n"
+                sorted_res = df_res.to_dict('records')
+                chunks = []
+                current_msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(sorted_res)}개의 타점 종목이 발견되었습니다.\n\n"
                 
-                if len(res) > 10:
-                    msg_text += f"...외 {len(res) - 10}개 종목 발견"
+                for r in sorted_res:
+                    stock_info = f"<b>{r['종목명']}</b> ({r['매수 시그널']})\n- 통과: {r['통과 개수']} | 통화: {r['통화']}\n- 현재가: {r['현재가']:,.2f} | 목표: {r['목표가']:,.2f}\n\n"
                     
-                is_success = send_telegram_message(tele_token, tele_chat_id, msg_text)
+                    if len(current_msg) + len(stock_info) > 3800:
+                        chunks.append(current_msg)
+                        current_msg = stock_info
+                    else:
+                        current_msg += stock_info
+                        
+                if current_msg:
+                    chunks.append(current_msg)
+                    
+                is_success = True
+                for chunk in chunks:
+                    success = send_telegram_message(tele_token, tele_chat_id, chunk)
+                    if not success: is_success = False
+                    time.sleep(0.3)
+                    
                 if is_success:
-                    st.success("📱 텔레그램으로 요약 알림이 전송되었습니다!")
+                    st.success("📱 텔레그램으로 모든 검색 결과가 전송되었습니다!")
             elif send_to_telegram:
                 st.warning("⚠️ 왼쪽 메뉴의 '텔레그램 알림 설정'에서 Token과 Chat ID를 모두 입력해야 전송됩니다.")
         else: st.warning("월봉 10선 위 안전한 종목이 없습니다.")
