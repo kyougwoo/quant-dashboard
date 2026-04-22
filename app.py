@@ -82,7 +82,6 @@ else:
     tele_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather에서 발급받은 토큰")
     tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="내 텔레그램 고유 숫자 ID")
 
-# 💡 텔레그램 메시지 전송 함수
 def send_telegram_message(token, chat_id, text):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -111,15 +110,12 @@ if 'portfolio' not in st.session_state or 'current_user' not in st.session_state
     st.session_state.current_user = st.session_state.user_id
 
 # ==========================================
-# 3. 데이터 수집 & 퀀트 지표 계산 (한국/미국 주식 통합)
+# 3. 데이터 수집 & 퀀트 지표 계산
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
     query = str(query).strip()
-    
-    if re.match(r'^[A-Za-z]+$', query):
-        return query.upper(), query.upper()
-        
+    if re.match(r'^[A-Za-z]+$', query): return query.upper(), query.upper()
     try:
         df_krx = fdr.StockListing('KRX')
         if query.isdigit() and len(query) == 6:
@@ -129,13 +125,8 @@ def get_stock_info(query):
             match = df_krx[df_krx['Name'] == query]
             if not match.empty: return query, match['Code'].values[0]
     except: pass
-    
-    top_stocks = {
-        "삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", "NAVER":"035420", 
-        "알테오젠":"196170", "루닛":"328130", "애플":"AAPL", "테슬라":"TSLA", "엔비디아":"NVDA", "마이크로소프트":"MSFT"
-    }
+    top_stocks = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", "NAVER":"035420", "알테오젠":"196170", "루닛":"328130", "애플":"AAPL", "테슬라":"TSLA", "엔비디아":"NVDA", "마이크로소프트":"MSFT"}
     if query in top_stocks: return query, top_stocks[query]
-    
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -200,8 +191,7 @@ def calculate_cloud_indicators(df):
         current_monthly_ema10 = float(monthly_close.ewm(span=10, adjust=False).mean().iloc[-1])
     except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
     
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
+    latest = df.iloc[-1]; prev = df.iloc[-2]
     
     indicators = {
         "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']),
@@ -210,7 +200,7 @@ def calculate_cloud_indicators(df):
         "Cloud_Rules": {
             "주가 > 200일선": bool(latest['Close'] > latest['EMA200']),
             "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']),
-            "5/15일선 정배열": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']),
+            "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']),
             "최대 거래량 종가 돌파": bool(latest['Close'] > vol_ref_price)
         }
     }
@@ -254,9 +244,7 @@ def get_ai_analysis(prompt, api_key):
                     time.sleep((float(match.group(1)) + 1.0) if match else 15.0)
                     continue
             elif "json" in err or "expecting value" in err:
-                if attempt < 4:
-                    time.sleep(2)
-                    continue
+                if attempt < 4: time.sleep(2); continue
             raise e
 
 def get_current_price(ticker):
@@ -406,7 +394,6 @@ with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
     mode = st.radio("모드", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"])
     
-    # 💡 스캔 완료 후 텔레그램 전송 옵션 추가
     send_to_telegram = st.checkbox("📱 스캔 완료 시 텔레그램으로 결과 전송", value=False)
     
     if st.button("🔎 검색 실행", type="primary", use_container_width=True):
@@ -438,10 +425,22 @@ with tab3:
                 if ind:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
-                        p = df['Close'].iloc[-1]; a = ind['ATR']
+                        p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
+                        
+                        # 💡 1. 여기서 상세한 ✅/❌ 항목들을 다시 추가하고, 
+                        # 💡 2. 가격은 문자가 아닌 순수 숫자(p)로 저장하여 엑셀 다운로드 시 완벽하게 계산되도록 합니다.
                         res.append({
-                            "종목명": n, "시그널": "🔥매수" if sc==4 else "👍분할", "통과": f"{sc}/4", 
-                            "현재가": format_price(p, c), "목표가": format_price(p+(a*4), c), "손절가": format_price(p-(a*2), c)
+                            "종목명": n, 
+                            "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
+                            "통과 개수": f"{sc}/4", 
+                            "월봉 장기추세": "🟢 안전",
+                            "주가 > 200일선": "✅" if ind["Cloud_Rules"]["주가 > 200일선"] else "❌",
+                            "5/15일선 정배열": "✅" if ind["Cloud_Rules"]["5/15일선 정배열(돌파)"] else "❌",
+                            "대량거래 돌파": "✅" if ind["Cloud_Rules"]["최대 거래량 종가 돌파"] else "❌",
+                            "현재가": p, 
+                            "목표가": p+(a*4), 
+                            "손절가": p-(a*2),
+                            "통화": "KRW" if str(c).isdigit() else "USD"
                         })
                 time.sleep(0.05)
             except: pass
@@ -449,18 +448,29 @@ with tab3:
         txt.text("✅ 완료!")
         
         if res:
-            df_res = pd.DataFrame(res).sort_values(by="통과", ascending=False)
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
-            st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv", use_container_width=True)
+            df_res = pd.DataFrame(res).sort_values(by="통과 개수", ascending=False)
             
-            # 💡 텔레그램 알림 자동 발송 로직
+            # 💡 웹 화면에서는 순수 숫자를 예쁘게(콤마, 소수점) 포맷팅해서 보여줍니다.
+            st.dataframe(
+                df_res, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "현재가": st.column_config.NumberColumn("현재가", format="%,.2f"),
+                    "목표가": st.column_config.NumberColumn("목표가", format="%,.2f"),
+                    "손절가": st.column_config.NumberColumn("손절가", format="%,.2f")
+                }
+            )
+            
+            # 💡 엑셀로 다운받을 때는 위에서 저장한 순수 숫자 데이터가 그대로 들어가서 계산이 편해집니다.
+            st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
+            
             if send_to_telegram and tele_token and tele_chat_id:
                 msg_text = f"🚀 *클라우드 퀀트 스캔 완료*\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
-                # 상위 10개만 메시지로 요약 전송 (메시지 길이 제한 방지)
                 for r in res[:10]:
-                    msg_text += f"*{r['종목명']}* ({r['시그널']})\n"
-                    msg_text += f"- 현재가: {r['현재가']} | 통과: {r['통과']}\n"
-                    msg_text += f"- 목표: {r['목표가']} | 손절: {r['손절가']}\n\n"
+                    msg_text += f"*{r['종목명']}* ({r['매수 시그널']})\n"
+                    msg_text += f"- 통과: {r['통과 개수']} | 통화: {r['통화']}\n"
+                    msg_text += f"- 현재가: {r['현재가']:,.2f} | 목표: {r['목표가']:,.2f}\n\n"
                 
                 if len(res) > 10:
                     msg_text += f"...외 {len(res) - 10}개 종목 발견"
