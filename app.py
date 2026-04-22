@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (궁극의 디버깅 및 방탄 엔진)
+# 2. Firebase DB 연결 (따옴표 파괴 스캐너 V3)
 # ==========================================
 @st.cache_resource
 def get_db():
@@ -59,6 +59,7 @@ def get_db():
     try:
         key_dict = {}
         debug_log = []
+        raw_s = ""
         
         # 💡 [방식 1] firebase 섹션으로 선언된 경우
         if "firebase" in st.secrets and hasattr(st.secrets["firebase"], "items"):
@@ -75,37 +76,47 @@ def get_db():
                 
             elif isinstance(fj, str):
                 s = fj.strip().replace('\xa0', ' ')
+                raw_s = s[:100] + "..." # 디버그용 원본 앞부분
                 
                 # 1단계: 정상적인 JSON 파싱 시도
                 try:
                     key_dict = json.loads(s, strict=False)
                     debug_log.append("표준 JSON 파싱 성공")
                 except:
-                    # 2단계: 문법이 깨졌다면 정규식으로 핵심 키 11개 강제 추출
-                    debug_log.append("표준 JSON 실패 -> 정규식 강제 추출 시도")
-                    keys = [
-                        "type", "project_id", "private_key_id", "private_key", 
-                        "client_email", "client_id", "auth_uri", "token_uri", 
-                        "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
-                    ]
-                    for k in keys:
-                        # 작은따옴표(')나 큰따옴표(") 모두 인식하고 내용을 강제로 긁어옴
-                        match = re.search(rf'[\'"]{k}[\'"]\s*:\s*[\'"](.*?)[\'"](?=\s*[,}}])', s, re.DOTALL)
-                        if match:
-                            key_dict[k] = match.group(1)
+                    # 2단계: 문법 붕괴 시 -> "따옴표 파괴 스캐너" 발동
+                    debug_log.append("표준 JSON 실패 -> 따옴표 파괴 스캐너 발동")
+                    
+                    # 프로젝트 ID 강제 추출 (따옴표 무시)
+                    pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)[\'"]?', s)
+                    if pm: key_dict["project_id"] = pm.group(1)
+                    
+                    # 이메일 강제 추출
+                    em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)[\'"]?', s)
+                    if em: key_dict["client_email"] = em.group(1)
+                    
+                    # 프라이빗 키 강제 추출 (-----BEGIN...END----- 구조만 찾음)
+                    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', s, re.DOTALL)
+                    if pk_match:
+                        key_dict["private_key"] = pk_match.group(1)
+                    
+                    # 나머지 기본값 채우기
+                    key_dict["type"] = "service_account"
+                    key_dict["token_uri"] = "https://oauth2.googleapis.com/token"
 
         # 💡 최종 딕셔너리 정제 및 줄바꿈 기호(\n) 완벽 복원
         clean_dict = {}
         for k, v in key_dict.items():
             if isinstance(v, str):
+                # 백슬래시 n(\n)이 진짜 글자로 굳어있으면 실제 줄바꿈으로 변경
                 clean_dict[str(k)] = v.replace("\\n", "\n")
             else:
                 clean_dict[str(k)] = v
                 
-        # 💡 필수 데이터 확인
+        # 💡 필수 데이터 확인 (실패 시 디버그 정보 대방출)
         if not clean_dict or "project_id" not in clean_dict or "private_key" not in clean_dict:
-            st.error("❌ [원인 분석 2] Streamlit Secrets 설정창에서 키를 읽어오지 못했습니다.")
-            st.info(f"💡 디버그 기록: {debug_log} | 현재 인식된 키: {list(clean_dict.keys())}")
+            st.error("❌ [원인 분석 2] Streamlit Secrets에서 핵심 키 2개(project_id, private_key)를 뽑아내지 못했습니다.")
+            st.info(f"💡 파이썬이 본 원본 글자: {raw_s}")
+            st.warning(f"💡 현재 인식된 키 목록: {list(clean_dict.keys())}")
             return None
             
         # 💡 최종 인증 및 DB 연결!
