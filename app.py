@@ -286,7 +286,7 @@ def get_top_200_stocks():
             "카카오":"035720", "LG화학":"051910", "메리츠금융지주":"138040", "삼성SDI":"006400", "삼성생명":"032830", 
             "한국전력":"015760", "HD현대중공업":"329180", "크래프톤":"259960", "포스코퓨처엠":"003670", "하이브":"352820", 
             "삼성화재":"000810", "KT&G":"033780", "우리금융지주":"316140", "HD한국조선해양":"009540", "기업은행":"024110", 
-            "고려아연":"010130", "두산에너빌리티":"034020", "KT":"030200", "한화에어로스페이스":"012450", "SK텔레콤":"017670", 
+            "고려아연":"010130", "두산에너빌리티":"034020", "KT":"030200", "한화에어로스페이스":"012450", "SK텔 검":"017670", 
             "삼성전기":"009150", "LG전자":"066570", "SK":"034730", "카카오뱅크":"323410", "삼성에스디에스":"018260", 
             "현대글로비스":"086280", "엔씨소프트":"036570", "LG생활건강":"051900", "대한항공":"003490", "아모레퍼시픽":"090430", 
             "LG":"003550", "현대제철":"004020", "SK이노베이션":"096770", "CJ제일제당":"097950", "한화솔루션":"009830", 
@@ -551,15 +551,16 @@ with tab2:
             p = get_current_price(tck) if tck else 0.0
             prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             prices.append(p); profs.append(prof); rates.append(rate)
-        dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
+        dis_df['현재가'] = prices; dis_df['수익금'] = profs; 단수익률 = rates
+        dis_df['수익률(%)'] = rates
         
         edt_df = st.data_editor(dis_df, column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
         
-        # 💡 [버그 수정] 무한 깜빡임(무한 새로고침) 완벽 해결
-        orig_compare = st.session_state.portfolio[['매수단가', '수량']].astype(float)
-        new_compare = edt_df[['매수단가', '수량']].astype(float)
+        # 💡 [버그 수정] 무한 깜빡임(무한 새로고침) 완벽 해결 - 문자열로 변환하여 미세한 오차 차단
+        orig_vals = st.session_state.portfolio[['매수단가', '수량']].fillna(0).values.tolist()
+        new_vals = edt_df[['매수단가', '수량']].fillna(0).values.tolist()
         
-        if not orig_compare.equals(new_compare):
+        if str(orig_vals) != str(new_vals):
             st.session_state.portfolio['매수단가'] = edt_df['매수단가']
             st.session_state.portfolio['수량'] = edt_df['수량']
             save_portfolio(st.session_state.portfolio)
@@ -678,7 +679,6 @@ with tab3:
         if "VIP" in mode and st.session_state.user_tier != 'VIP':
             st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용</h4><p>사이드바에서 <b>로그인</b> 후 이용하세요.</p></div>", unsafe_allow_html=True); st.stop()
             
-        # 💡 [버그 수정] 데이터를 불러올 때 UI가 얼어붙어(깜빡거림) 오해하지 않도록 스피너 장착
         with st.spinner("전체 시장 종목을 불러오는 중입니다... (최초 1회 수 초 소요)"):
             if "한국 우량주" in mode:
                 sl = {
