@@ -49,14 +49,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (V4 무적 스캐너 + 자가진단 탑재)
+# 2. Firebase DB 연결 (캐시 숨김 버그 해결 및 에러 영구 표시)
 # ==========================================
-@st.cache_resource
-def get_db():
+def init_db():
     if not FIREBASE_AVAILABLE:
-        st.error("🚨 치명적 오류: 클라우드 서버에 Firebase 부품이 없습니다!")
-        st.info("💡 [해결 가이드]\n1. 깃허브에 `requirements.txt` 파일이 있나요? (끝에 s가 빠진 requirement.txt면 안 됩니다!)\n2. 그 파일 안에 `google-cloud-firestore` 라고 정확히 적혀있나요?\n3. 둘 다 맞다면 Streamlit 화면 우측 하단의 [Manage app] ➡️ [Delete] 로 앱을 삭제 후 다시 [Deploy] 해보세요.")
-        return None
+        return None, f"🚨 라이브러리 누락 (구글 엔진 부품 없음)\n\n에러 상세: {FIREBASE_IMPORT_ERROR}\n\n💡 GitHub의 requirements.txt 파일에 'google-cloud-firestore'가 잘 적혀있는지 확인하시고, 앱을 Delete 후 다시 Deploy 해주세요!"
         
     try:
         raw_s = ""
@@ -66,8 +63,7 @@ def get_db():
         elif "firebase" in st.secrets:
             raw_s = str(dict(st.secrets["firebase"]))
         else:
-            st.error("❌ [에러 2] Streamlit 설정창(Secrets)이 완전히 텅 비어있거나 키를 찾을 수 없습니다.")
-            return None
+            return None, "❌ [에러 2] Streamlit 설정창(Secrets)이 완전히 텅 비어있거나 키를 찾을 수 없습니다."
 
         # 2. 정규식으로 핵심 데이터 강제 스캔
         pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
@@ -87,8 +83,7 @@ def get_db():
             private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
             
         if not project_id or not client_email or not private_key:
-            st.error("❌ [에러 3] 암호문(Private Key) 추출 실패. Secrets에 붙여넣으신 JSON 내용이 일부 잘려나갔을 수 있습니다.")
-            return None
+            return None, "❌ [에러 3] 암호문(Private Key) 추출 실패. Secrets에 붙여넣으신 JSON 내용이 일부 잘려나갔을 수 있습니다."
             
         # 4. 완벽하게 소독된 데이터로 접속
         creds_dict = {
@@ -100,15 +95,20 @@ def get_db():
         }
         
         creds = service_account.Credentials.from_service_account_info(creds_dict)
-        return firestore.Client(credentials=creds, project=project_id)
+        client = firestore.Client(credentials=creds, project=project_id)
+        return client, "✅ 연결 성공"
         
     except Exception as e:
-        st.error(f"❌ [최종 에러] 구글 서버 접속 거부: {e}")
         import traceback
-        st.code(traceback.format_exc())
-        return None
+        return None, f"❌ [최종 에러] 구글 서버 접속 거부: {e}\n\n{traceback.format_exc()}"
 
-db = get_db()
+# 앱이 실행될 때마다 DB 상태를 체크하여 세션(Session)에 영구 저장합니다.
+if 'db_client' not in st.session_state:
+    client, msg = init_db()
+    st.session_state.db_client = client
+    st.session_state.db_msg = msg
+
+db = st.session_state.db_client
 
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_id' not in st.session_state: st.session_state.user_id = 'guest'
@@ -158,12 +158,15 @@ gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
 if not gemini_api_key: gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 else: st.sidebar.success("✅ AI 엔진 연동 완료")
 
+# 💡 사이드바에 Firebase 에러를 영구적으로 박제하여 보여줍니다.
 if db: 
     st.sidebar.success("☁️ Firebase 클라우드 DB 연동 완료")
 else: 
     st.sidebar.warning("⚠️ Firebase 미연동 (로컬 저장모드)")
-    if st.sidebar.button("🔍 연결 에러 원인 1초 진단하기"):
-        st.sidebar.error("화면 상단에 출력된 ❌ 에러 메시지를 확인해주세요! (글자가 안 보인다면 화면을 위로 올려보세요)")
+    st.sidebar.error(st.session_state.db_msg)
+    if st.sidebar.button("🔄 Firebase 연결 재시도"):
+        del st.session_state['db_client']
+        st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.title("🔔 텔레그램 알림 설정")
@@ -363,7 +366,7 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(완성판)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(완전체)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
 
