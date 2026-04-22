@@ -95,7 +95,10 @@ if not st.session_state.logged_in:
                 if user_doc.exists:
                     user_data = user_doc.to_dict()
                     if user_data.get('password') == login_pw:
-                        st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = user_data.get('tier', 'Free')
+                        st.session_state.logged_in = True
+                        st.session_state.user_id = login_id
+                        # 💡 튼튼한 예외처리: DB에 'tier' 값이 없어도 에러 없이 'Free'로 넘어가도록 수정!
+                        st.session_state.user_tier = user_data.get('tier', 'Free')
                         st.sidebar.success("로그인 성공!"); st.rerun()
                     else:
                         st.sidebar.error("❌ 비밀번호가 틀렸습니다.")
@@ -481,7 +484,6 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
-                        
                         res.append({
                             "종목명": n, 
                             "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
