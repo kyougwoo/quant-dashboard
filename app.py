@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (따옴표 파괴 스캐너 V3)
+# 2. Firebase DB 연결 (V4 무적 스캐너 탑재)
 # ==========================================
 @st.cache_resource
 def get_db():
@@ -83,23 +83,26 @@ def get_db():
                     key_dict = json.loads(s, strict=False)
                     debug_log.append("표준 JSON 파싱 성공")
                 except:
-                    # 2단계: 문법 붕괴 시 -> "따옴표 파괴 스캐너" 발동
-                    debug_log.append("표준 JSON 실패 -> 따옴표 파괴 스캐너 발동")
+                    # 2단계: V4 무적 스캐너 발동
+                    debug_log.append("표준 JSON 실패 -> V4 무적 스캐너 발동")
                     
-                    # 프로젝트 ID 강제 추출 (따옴표 무시)
+                    # 프로젝트 ID 추출
                     pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)[\'"]?', s)
                     if pm: key_dict["project_id"] = pm.group(1)
                     
-                    # 이메일 강제 추출
+                    # 이메일 추출
                     em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)[\'"]?', s)
                     if em: key_dict["client_email"] = em.group(1)
                     
-                    # 프라이빗 키 강제 추출 (-----BEGIN...END----- 구조만 찾음)
-                    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', s, re.DOTALL)
-                    if pk_match:
-                        key_dict["private_key"] = pk_match.group(1)
+                    # 프라이빗 키 추출 (핵심: 어떤 특수기호나 줄바꿈이 와도 무조건 잡아냄)
+                    # "private_key" 글자 이후부터 등장하는 -----BEGIN... 부터 -----END... 까지 통째로 긁어옵니다.
+                    pk_start = s.find("-----BEGIN PRIVATE KEY-----")
+                    pk_end = s.find("-----END PRIVATE KEY-----")
+                    if pk_start != -1 and pk_end != -1:
+                        # 끝나는 부분 문자열 길이(25)만큼 더해서 잘라냄
+                        key_dict["private_key"] = s[pk_start : pk_end + 25] 
                     
-                    # 나머지 기본값 채우기
+                    # 나머지 필수 항목 채우기
                     key_dict["type"] = "service_account"
                     key_dict["token_uri"] = "https://oauth2.googleapis.com/token"
 
@@ -107,12 +110,12 @@ def get_db():
         clean_dict = {}
         for k, v in key_dict.items():
             if isinstance(v, str):
-                # 백슬래시 n(\n)이 진짜 글자로 굳어있으면 실제 줄바꿈으로 변경
+                # 백슬래시 n(\n) 문자열을 실제 줄바꿈 문자로 변환
                 clean_dict[str(k)] = v.replace("\\n", "\n")
             else:
                 clean_dict[str(k)] = v
                 
-        # 💡 필수 데이터 확인 (실패 시 디버그 정보 대방출)
+        # 💡 필수 데이터 확인
         if not clean_dict or "project_id" not in clean_dict or "private_key" not in clean_dict:
             st.error("❌ [원인 분석 2] Streamlit Secrets에서 핵심 키 2개(project_id, private_key)를 뽑아내지 못했습니다.")
             st.info(f"💡 파이썬이 본 원본 글자: {raw_s}")
