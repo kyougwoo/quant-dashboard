@@ -12,6 +12,7 @@ import os
 import time
 import re
 import ast
+import textwrap # 💡 암호문 재조립을 위한 필수 모듈
 
 # 💡 Firebase 클라우드 DB 라이브러리 로드 시도 및 원인 파악
 FIREBASE_IMPORT_ERROR = ""
@@ -48,86 +49,62 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (V4 무적 스캐너 탑재)
+# 2. Firebase DB 연결 (최후의 완벽 재조립 엔진)
 # ==========================================
 @st.cache_resource
 def get_db():
     if not FIREBASE_AVAILABLE:
-        st.error(f"❌ [원인 분석 1] 라이브러리 누락: GitHub의 `requirements.txt` 파일에 `google-cloud-firestore` 가 적혀있지 않거나 서버에 설치되지 않았습니다. ({FIREBASE_IMPORT_ERROR})")
+        st.error(f"❌ [에러 1] 라이브러리 누락: requirements.txt 파일에 google-cloud-firestore를 확인하세요.")
         return None
         
     try:
-        key_dict = {}
-        debug_log = []
         raw_s = ""
-        
-        # 💡 [방식 1] firebase 섹션으로 선언된 경우
-        if "firebase" in st.secrets and hasattr(st.secrets["firebase"], "items"):
-            key_dict = dict(st.secrets["firebase"])
-            debug_log.append("TOML [firebase] 블록 인식")
-            
-        # 💡 [방식 2] FIREBASE_JSON으로 선언된 경우 (대표님 설정 방식)
-        if not key_dict and "FIREBASE_JSON" in st.secrets:
-            fj = st.secrets["FIREBASE_JSON"]
-            
-            if hasattr(fj, "items"):
-                key_dict = dict(fj)
-                debug_log.append("TOML 딕셔너리 파싱 인식")
-                
-            elif isinstance(fj, str):
-                s = fj.strip().replace('\xa0', ' ')
-                raw_s = s[:100] + "..." # 디버그용 원본 앞부분
-                
-                # 1단계: 정상적인 JSON 파싱 시도
-                try:
-                    key_dict = json.loads(s, strict=False)
-                    debug_log.append("표준 JSON 파싱 성공")
-                except:
-                    # 2단계: V4 무적 스캐너 발동
-                    debug_log.append("표준 JSON 실패 -> V4 무적 스캐너 발동")
-                    
-                    # 프로젝트 ID 추출
-                    pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)[\'"]?', s)
-                    if pm: key_dict["project_id"] = pm.group(1)
-                    
-                    # 이메일 추출
-                    em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)[\'"]?', s)
-                    if em: key_dict["client_email"] = em.group(1)
-                    
-                    # 프라이빗 키 추출 (핵심: 어떤 특수기호나 줄바꿈이 와도 무조건 잡아냄)
-                    # "private_key" 글자 이후부터 등장하는 -----BEGIN... 부터 -----END... 까지 통째로 긁어옵니다.
-                    pk_start = s.find("-----BEGIN PRIVATE KEY-----")
-                    pk_end = s.find("-----END PRIVATE KEY-----")
-                    if pk_start != -1 and pk_end != -1:
-                        # 끝나는 부분 문자열 길이(25)만큼 더해서 잘라냄
-                        key_dict["private_key"] = s[pk_start : pk_end + 25] 
-                    
-                    # 나머지 필수 항목 채우기
-                    key_dict["type"] = "service_account"
-                    key_dict["token_uri"] = "https://oauth2.googleapis.com/token"
+        # 1. 설정창에서 글자 덩어리 무식하게 전체 가져오기
+        if "FIREBASE_JSON" in st.secrets:
+            raw_s = str(st.secrets["FIREBASE_JSON"])
+        elif "firebase" in st.secrets:
+            raw_s = str(dict(st.secrets["firebase"]))
+        else:
+            st.error("❌ [에러 2] Secrets에 Firebase 설정이 비어있습니다.")
+            return None
 
-        # 💡 최종 딕셔너리 정제 및 줄바꿈 기호(\n) 완벽 복원
-        clean_dict = {}
-        for k, v in key_dict.items():
-            if isinstance(v, str):
-                # 백슬래시 n(\n) 문자열을 실제 줄바꿈 문자로 변환
-                clean_dict[str(k)] = v.replace("\\n", "\n")
-            else:
-                clean_dict[str(k)] = v
-                
-        # 💡 필수 데이터 확인
-        if not clean_dict or "project_id" not in clean_dict or "private_key" not in clean_dict:
-            st.error("❌ [원인 분석 2] Streamlit Secrets에서 핵심 키 2개(project_id, private_key)를 뽑아내지 못했습니다.")
-            st.info(f"💡 파이썬이 본 원본 글자: {raw_s}")
-            st.warning(f"💡 현재 인식된 키 목록: {list(clean_dict.keys())}")
+        # 2. 어떻게 깨져있든 정규식으로 핵심 데이터 3개만 강제 스캔
+        pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
+        project_id = pm.group(1) if pm else None
+        
+        em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
+        client_email = em.group(1) if em else None
+        
+        # 💡 3. [가장 중요] 망가진 private_key를 구글 규격에 맞춰 수학적으로 완벽 복원!
+        pk_match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_s, re.DOTALL)
+        private_key = None
+        
+        if pk_match:
+            pk_body = pk_match.group(1)
+            # 모든 공백, 찌꺼기, 깨진 줄바꿈 기호를 싹 다 갈아엎어버림 (오직 Base64 문자만 남김)
+            pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_body)
+            # 구글 인증 규격에 맞게 정확히 64글자 단위로 잘라서 깨끗한 줄바꿈을 넣어 재조립!
+            chunks = textwrap.wrap(pk_body, 64)
+            private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
+            
+        if not project_id or not client_email or not private_key:
+            st.error("❌ [에러 3] 키를 추출하지 못했습니다. (비밀키가 잘렸을 수 있습니다)")
             return None
             
-        # 💡 최종 인증 및 DB 연결!
-        creds = service_account.Credentials.from_service_account_info(clean_dict)
-        return firestore.Client(credentials=creds, project=clean_dict["project_id"])
+        # 4. 완벽하게 소독된 데이터로 접속 시도!
+        creds_dict = {
+            "type": "service_account",
+            "project_id": project_id,
+            "private_key": private_key,
+            "client_email": client_email,
+            "token_uri": "https://oauth2.googleapis.com/token"
+        }
+        
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        return firestore.Client(credentials=creds, project=project_id)
         
     except Exception as e:
-        st.error(f"❌ [원인 분석 3] DB 인증 거부: {e}")
+        st.error(f"❌ [최종 에러] 접속 실패: {e}")
         import traceback
         st.code(traceback.format_exc())
         return None
