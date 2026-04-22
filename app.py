@@ -15,15 +15,17 @@ import re
 # ==========================================
 # 1. 페이지 설정 및 모바일 UX 최적화
 # ==========================================
-st.set_page_config(page_title="클라우드 기법 퀀트", layout="wide", page_icon="☁️", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="클라우드 기법 퀀트", layout="wide", page_icon="☁️", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* 💡 사이드바 여는 메뉴(Header)는 살려두고, 불필요한 우측 메뉴만 지웁니다 */
     #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {background-color: transparent !important;}
+    
     @media (max-width: 768px) {
-        .block-container { padding: 3.5rem 0.5rem 2rem 0.5rem !important; }
+        .block-container { padding: 3rem 0.5rem 2rem 0.5rem !important; }
         h1 { font-size: 1.4rem !important; margin-bottom: 10px !important; line-height: 1.3 !important; }
         h2 { font-size: 1.2rem !important; }
         h3 { font-size: 1.1rem !important; }
@@ -85,11 +87,16 @@ if 'portfolio' not in st.session_state or 'current_user' not in st.session_state
     st.session_state.current_user = st.session_state.user_id
 
 # ==========================================
-# 3. 데이터 수집 & 퀀트 지표 계산
+# 3. 데이터 수집 & 퀀트 지표 계산 (한국/미국 주식 통합)
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
     query = str(query).strip()
+    
+    # 💡 영어로만 입력되면 미국 주식 티커로 자동 인식
+    if re.match(r'^[A-Za-z]+$', query):
+        return query.upper(), query.upper()
+        
     try:
         df_krx = fdr.StockListing('KRX')
         if query.isdigit() and len(query) == 6:
@@ -99,8 +106,13 @@ def get_stock_info(query):
             match = df_krx[df_krx['Name'] == query]
             if not match.empty: return query, match['Code'].values[0]
     except: pass
-    top_stocks = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", "NAVER":"035420", "알테오젠":"196170", "루닛":"328130"}
+    
+    top_stocks = {
+        "삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", "NAVER":"035420", 
+        "알테오젠":"196170", "루닛":"328130", "애플":"AAPL", "테슬라":"TSLA", "엔비디아":"NVDA", "마이크로소프트":"MSFT"
+    }
     if query in top_stocks: return query, top_stocks[query]
+    
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -120,6 +132,16 @@ def get_top_200_stocks():
         df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {}
+
+# 💡 미국 S&P 500 상위 종목 수집 함수 추가
+@st.cache_data(ttl=86400)
+def get_us_top_stocks():
+    try:
+        df = fdr.StockListing('S&P500')
+        top_100 = df.head(100)
+        return dict(zip(top_100['Name'], top_100['Symbol']))
+    except:
+        return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA", "Microsoft":"MSFT", "Alphabet":"GOOGL", "Amazon":"AMZN", "Meta":"META"}
 
 @st.cache_data(ttl=3600)
 def get_recent_news(keyword):
@@ -200,7 +222,6 @@ def get_ai_analysis(prompt, api_key):
     for attempt in range(5):
         try:
             res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-            # 💡 잘림 방지용 가장 짧고 안전한 텍스트 파싱 로직 적용
             text = res.text.replace("```json", "").replace("```", "").strip()
             return json.loads(text)
         except Exception as e:
@@ -219,8 +240,13 @@ def get_ai_analysis(prompt, api_key):
 def get_current_price(ticker):
     try:
         df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-        return int(df['Close'].iloc[-1]) if not df.empty else 0
-    except: return 0
+        return float(df['Close'].iloc[-1]) if not df.empty else 0.0
+    except: return 0.0
+
+# 달러/원화 표시 자동 변환 도우미 함수
+def format_price(price, ticker):
+    if str(ticker).isdigit(): return f"{int(price):,}원"
+    else: return f"${price:.2f}"
 
 # ==========================================
 # 4. 메인 대시보드 UI (SaaS 디자인)
@@ -230,17 +256,20 @@ st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 
 st.markdown("---")
 
 col_s1, col_s2 = st.columns([1, 1])
-with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "알테오젠", "루닛"])
+with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "알테오젠", "애플(AAPL)", "테슬라(TSLA)", "엔비디아(NVDA)"])
 with col_s2:
-    if fast_search == "직접 입력": stock_name = st.text_input("종목명 (또는 6자리 코드)", "삼성전자")
-    else: stock_name = fast_search; st.text_input("선택된 종목", value=stock_name, disabled=True)
+    if fast_search == "직접 입력": stock_name = st.text_input("종목명 (또는 6자리/영문 코드)", "삼성전자")
+    else: 
+        # "애플(AAPL)" 등에서 영문 티커만 추출
+        stock_name = fast_search.split("(")[-1].replace(")", "") if "(" in fast_search else fast_search
+        st.text_input("선택된 종목", value=stock_name, disabled=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
-tab1, tab2, tab3 = st.tabs(["📊 차트 분석", "💼 내 포트폴리오", "🔍 VIP 검색기"])
+tab1, tab2, tab3 = st.tabs(["📊 차트 분석", "💼 내 포트폴리오", "🔍 VIP 스크리너 (한/미 통합)"])
 
 # [탭 1] 차트 분석
 with tab1:
-    if not gemini_api_key: st.warning("👈 왼쪽 메뉴에 API Key를 입력하세요."); st.stop()
+    if not gemini_api_key: st.warning("👈 왼쪽 메뉴를 열어 API Key를 입력하세요."); st.stop()
     actual_name, ticker = get_stock_info(stock_name)
     if not ticker: st.error("종목 코드를 찾을 수 없습니다."); st.stop()
 
@@ -267,11 +296,11 @@ with tab1:
         st.markdown("**☁️ 클라우드 4원칙**")
         if tech_ind:
             for rule, passed in tech_ind["Cloud_Rules"].items(): st.write(f"{'✅' if passed else '❌'} {rule}")
-            stop_loss = int(df['Close'].iloc[-1]) - (int(tech_ind.get('ATR', 0)) * 2)
-            st.info(f"🛡️ **터틀 손절가:** {stop_loss:,}원")
+            stop_loss = df['Close'].iloc[-1] - (tech_ind.get('ATR', 0) * 2)
+            st.info(f"🛡️ **터틀 손절가:** {format_price(stop_loss, ticker)}")
             st.markdown("**📅 월봉 10선 추세**")
-            if tech_ind.get('Is_Above_Monthly_EMA10'): st.success("🟢 안전 (10선 돌파)")
-            else: st.error("🔴 위험 (10선 이탈)")
+            if tech_ind.get('Is_Above_Monthly_EMA10'): st.success(f"🟢 안전 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 돌파)")
+            else: st.error(f"🔴 위험 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 이탈)")
         else: st.error("계산 불가")
     with info_col2:
         st.markdown("**📰 AI 뉴스 스크랩**")
@@ -293,7 +322,7 @@ with tab1:
                 prompt = f"""
                 종목: {actual_name}, 단기 클라우드 통과: {sum(1 for v in tech_ind["Cloud_Rules"].values() if v)}/4
                 월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험(저승사자)'}
-                손절가: {stop_loss}원, 뉴스: {get_recent_news(actual_name)}
+                손절가: {format_price(stop_loss, ticker)}, 뉴스: {get_recent_news(actual_name)}
                 위험 상태면 무조건 관망/매도 지시해. JSON 응답: {{"technicalAgent": {{"score": 8, "reasoning": "..."}}, "fundamentalAgent": {{"score": 6, "reasoning": "..."}}, "riskManager": {{"action": "매수", "positionSize": "20%", "reasoning": "..."}}}}
                 """
                 try:
@@ -310,9 +339,9 @@ with tab2:
     st.subheader(f"💼 {st.session_state.user_id}님의 포트폴리오")
     with st.form("add_stock_form"):
         c1, c2 = st.columns(2); c3, c4 = st.columns(2)
-        with c1: p_name = st.text_input("종목명", "현대차")
-        with c2: p_price = st.number_input("매수 단가", min_value=0, step=1000)
-        with c3: p_qty = st.number_input("수량", min_value=1, step=1)
+        with c1: p_name = st.text_input("종목명 (또는 TSLA 등)", "현대차")
+        with c2: p_price = st.number_input("매수 단가 (원/달러)", min_value=0.0, step=1.0)
+        with c3: p_qty = st.number_input("수량", min_value=1.0, step=1.0)
         with c4: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); submitted = st.form_submit_button("➕ 추가", use_container_width=True)
         if submitted:
             an, _ = get_stock_info(p_name)
@@ -324,7 +353,7 @@ with tab2:
         prices=[]; profs=[]; rates=[]
         for _, r in dis_df.iterrows():
             _, tck = get_stock_info(r['종목명'])
-            p = get_current_price(tck) if tck else 0
+            p = get_current_price(tck) if tck else 0.0
             prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             prices.append(p); profs.append(prof); rates.append(rate)
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
@@ -355,24 +384,26 @@ with tab2:
 # [탭 3] VIP 검색기
 with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
-    mode = st.radio("모드", ["⚡ 우량주 40종목 (무료)", "💎 코스피 상위 200종목 (VIP)"])
+    mode = st.radio("모드", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"])
     if st.button("🔎 검색 실행", type="primary", use_container_width=True):
         if "VIP" in mode and st.session_state.user_tier != 'VIP':
             st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용</h4><p>사이드바에서 <b>로그인</b> 후 이용하세요.</p></div>", unsafe_allow_html=True); st.stop()
             
-        sl = {
-            "삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220",
-            "현대차":"005380", "기아":"000270", "셀트리온":"068270", "POSCO홀딩스":"005490",
-            "KB금융":"105560", "NAVER":"035420", "카카오":"035720", "에코프로":"086520",
-            "에코프로비엠":"247540", "두산에너빌리티":"034020", "HD현대미포":"010620",
-            "알테오젠":"196170", "LG화학":"051910", "삼성SDI":"006400", "엔켐":"283360",
-            "HLB":"028300", "한미반도체":"042700", "크래프톤":"035760", "현대모비스":"012330",
-            "LG전자":"066570", "신한지주":"055550", "하나금융지주":"086790", "한국전력":"015760",
-            "HD한국조선해양":"009540", "HD현대중공업":"329180", "한화에어로스페이스":"012450",
-            "LIG넥스원":"079550", "현대로템":"064350", "삼양식품":"145990", "아모레퍼시픽":"090430",
-            "SK이노베이션":"096770", "포스코퓨처엠":"003670", "두산로보틱스":"277810",
-            "메리츠금융지주":"138040", "삼성물산":"028260", "제주반도체":"080220", "루닛":"328130"
-        } if "무료" in mode else get_top_200_stocks()
+        if "한국 우량주" in mode:
+            sl = {
+                "삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "셀트리온":"068270",
+                "POSCO홀딩스":"005490", "KB금융":"105560", "NAVER":"035420", "카카오":"035720", "에코프로":"086520", "에코프로비엠":"247540",
+                "두산에너빌리티":"034020", "HD현대미포":"010620", "알테오젠":"196170", "LG화학":"051910", "삼성SDI":"006400", "엔켐":"283360",
+                "HLB":"028300", "한미반도체":"042700", "크래프톤":"035760", "현대모비스":"012330", "LG전자":"066570", "신한지주":"055550",
+                "하나금융지주":"086790", "한국전력":"015760", "HD한국조선해양":"009540", "HD현대중공업":"329180", "한화에어로스페이스":"012450",
+                "LIG넥스원":"079550", "현대로템":"064350", "삼양식품":"145990", "아모레퍼시픽":"090430", "SK이노베이션":"096770", "포스코퓨처엠":"003670",
+                "두산로보틱스":"277810", "메리츠금융지주":"138040", "삼성물산":"028260", "제주반도체":"080220", "루닛":"328130"
+            }
+        elif "한국 코스피" in mode:
+            sl = get_top_200_stocks()
+        else:
+            sl = get_us_top_stocks()
+            
         if not sl: st.error("데이터 오류"); st.stop()
         
         res = []; bar = st.progress(0); txt = st.empty()
@@ -384,7 +415,10 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = df['Close'].iloc[-1]; a = ind['ATR']
-                        res.append({"종목명": n, "시그널": "🔥매수" if sc==4 else "👍분할", "통과": f"{sc}/4", "현재가": f"{int(p):,}원", "목표가": f"{int(p+(a*4)):,}원", "손절가": f"{int(p-(a*2)):,}원"})
+                        res.append({
+                            "종목명": n, "시그널": "🔥매수" if sc==4 else "👍분할", "통과": f"{sc}/4", 
+                            "현재가": format_price(p, c), "목표가": format_price(p+(a*4), c), "손절가": format_price(p-(a*2), c)
+                        })
                 time.sleep(0.05)
             except: pass
             bar.progress((i+1)/len(sl))
