@@ -12,13 +12,15 @@ import os
 import time
 import re
 
-# 💡 Firebase 클라우드 DB 라이브러리 (설치 전 에러 방지용 예외 처리)
+# 💡 Firebase 클라우드 DB 라이브러리 로드 시도 및 원인 파악
+FIREBASE_IMPORT_ERROR = ""
 try:
     from google.cloud import firestore
     from google.oauth2 import service_account
     FIREBASE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     FIREBASE_AVAILABLE = False
+    FIREBASE_IMPORT_ERROR = str(e)
 
 # ==========================================
 # 1. 페이지 설정 및 모바일 UX 최적화
@@ -49,23 +51,29 @@ st.markdown("""
 # ==========================================
 @st.cache_resource
 def get_db():
-    if FIREBASE_AVAILABLE:
-        try:
-            key_dict = None
-            # 💡 방식 1: JSON 문자열 전체를 한 번에 파싱 (가장 안전한 방식 - 따옴표 3개 사용)
-            if "FIREBASE_JSON" in st.secrets:
-                key_dict = json.loads(st.secrets["FIREBASE_JSON"])
-            # 💡 방식 2: 기존 TOML 섹션 방식 (호환성 유지)
-            elif "firebase" in st.secrets:
-                key_dict = dict(st.secrets["firebase"])
-                
-            if key_dict:
-                creds = service_account.Credentials.from_service_account_info(key_dict)
-                return firestore.Client(credentials=creds)
-        except Exception as e:
-            st.warning(f"⚠️ Firebase 연결 오류: {e}")
+    if not FIREBASE_AVAILABLE:
+        st.error(f"❌ [원인 분석 1] 라이브러리 누락: GitHub의 `requirements.txt` 파일에 `google-cloud-firestore` 가 적혀있지 않거나 서버에 설치되지 않았습니다. ({FIREBASE_IMPORT_ERROR})")
+        return None
+        
+    try:
+        key_dict = None
+        if "FIREBASE_JSON" in st.secrets:
+            key_dict = json.loads(st.secrets["FIREBASE_JSON"])
+        elif "firebase" in st.secrets:
+            key_dict = dict(st.secrets["firebase"])
+            
+        if not key_dict:
+            st.error("❌ [원인 분석 2] 설정 누락: Streamlit Secrets 설정창에 `FIREBASE_JSON` 값이 비어있거나 올바르지 않습니다.")
             return None
-    return None
+            
+        creds = service_account.Credentials.from_service_account_info(key_dict)
+        return firestore.Client(credentials=creds)
+    except json.JSONDecodeError:
+        st.error("❌ [원인 분석 3] 문법 오류: Secrets에 입력한 JSON 내용에 오타가 있습니다. 쉼표(,)나 따옴표(\")를 확인하세요.")
+        return None
+    except Exception as e:
+        st.error(f"❌ [원인 분석 4] 알 수 없는 오류: {e}")
+        return None
 
 db = get_db()
 
@@ -82,7 +90,6 @@ if not st.session_state.logged_in:
     if st.sidebar.button("로그인 / 회원가입", use_container_width=True):
         if login_id and login_pw:
             if db:
-                # 💡 Firebase가 연결된 경우: 실제 DB 인증
                 user_ref = db.collection('users').document(login_id)
                 user_doc = user_ref.get()
                 if user_doc.exists:
@@ -98,7 +105,6 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = tier
                     st.sidebar.success("🎉 회원가입 및 로그인 완료!"); st.rerun()
             else:
-                # 💡 Firebase 세팅 전: 로컬(기존) 방식
                 st.session_state.logged_in = True; st.session_state.user_id = login_id
                 st.session_state.user_tier = 'VIP' if login_id == 'vip' else 'Free'
                 st.rerun()
