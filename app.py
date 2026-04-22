@@ -72,7 +72,7 @@ def init_db():
         em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
         client_email = em.group(1) if em else None
         
-        # 💡 3. 가장 중요한 암호문(Private Key) 추출 및 잘림(Truncation) 완벽 진단!
+        # 3. 가장 중요한 암호문(Private Key) 추출 및 잘림(Truncation) 완벽 진단!
         pk_start = raw_s.find("-----BEGIN PRIVATE KEY-----")
         pk_end = raw_s.find("-----END PRIVATE KEY-----")
         
@@ -80,7 +80,6 @@ def init_db():
             return None, "❌ [에러 3A] 암호문 시작점(BEGIN PRIVATE KEY)이 없습니다. 설정창(Secrets) 내용을 확인해주세요."
             
         if pk_end == -1:
-            # 복사 과정에서 끝부분이 잘렸음이 100% 확실함!
             last_chars = raw_s[-100:] if len(raw_s) > 100 else raw_s
             return None, f"❌ [에러 3B] 암호문 끝부분(END PRIVATE KEY)이 잘려나갔습니다!\n\n💡 복사하신 내용의 마지막 100글자:\n`{last_chars}`\n\n👉 해결법: 메모장에서 JSON 파일을 여신 후, 마우스 드래그 대신 키보드 단축키 **(Ctrl + A)** 를 눌러 전체 선택 후 다시 복사해서 붙여넣어주세요!"
         
@@ -168,12 +167,11 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.title("⚙️ 시스템 설정")
 
-# 💡 API 키 양옆의 띄어쓰기(공백)를 강제로 제거하는 완벽 처리 (.strip() 추가)
+# API 키 및 설정 (공백 제거 적용)
 gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
 if not gemini_api_key: gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 else: st.sidebar.success("✅ AI 엔진 연동 완료")
 
-# 💡 사이드바에 Firebase 에러를 영구적으로 박제하여 보여줍니다.
 if db: 
     st.sidebar.success("☁️ Firebase 클라우드 DB 접속 완료")
 else: 
@@ -186,7 +184,6 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.title("🔔 텔레그램 알림 설정")
 
-# 💡 텔레그램 토큰과 아이디 끝에 실수로 들어간 스페이스바 공백 강제 제거 (.strip() 추가)
 tele_token = str(st.secrets.get("TELEGRAM_TOKEN", "")).strip()
 tele_chat_id = str(st.secrets.get("TELEGRAM_CHAT_ID", "")).strip()
 
@@ -216,7 +213,6 @@ def load_portfolio():
         except Exception as e:
             if "PermissionDenied" in str(e) or "403" in str(e):
                 st.toast("⚠️ Firestore 데이터베이스가 '테스트 모드'로 생성되지 않아 로컬 모드로 동작합니다.")
-    # 로컬 저장 Fallback
     file_name = f'portfolio_data_{st.session_state.user_id}.csv'
     if os.path.exists(file_name):
         try: return pd.read_csv(file_name)
@@ -230,8 +226,7 @@ def save_portfolio(df):
             return
         except Exception as e:
             if "PermissionDenied" in str(e) or "403" in str(e):
-                st.toast("⚠️ Firestore 권한 없음. 로컬에 저장합니다. (콘솔에서 DB를 생성하세요)")
-    # 로컬 저장 Fallback
+                st.toast("⚠️ Firestore 권한 없음. 로컬에 저장합니다.")
     df.to_csv(f'portfolio_data_{st.session_state.user_id}.csv', index=False)
 
 if 'portfolio' not in st.session_state or 'current_user' not in st.session_state or st.session_state.current_user != st.session_state.user_id:
@@ -268,7 +263,6 @@ def get_stock_info(query):
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
-        # 1차 시도: KOSPI 우선 (KRX-MARCAP 보다 차단 확률이 낮음)
         try: df = fdr.StockListing('KOSPI')
         except: df = fdr.StockListing('KRX-MARCAP')
         
@@ -284,7 +278,7 @@ def get_top_200_stocks():
         if len(res) > 10: return res
         raise Exception("Fetch Failed")
     except: 
-        # 💡 [핵심] 클라우드 서버에서 KRX IP 차단 시 작동하는 무적의 비상용 데이터베이스
+        # 💡 [핵심] 한국거래소 서버 차단 시 작동하는 하드코딩 비상망
         return {
             "삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "삼성바이오로직스":"207940", 
             "현대차":"005380", "기아":"000270", "셀트리온":"068270", "KB금융":"105560", "POSCO홀딩스":"005490", 
@@ -417,7 +411,6 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-# 💡 (모닝 브리핑 탑재) 문구 삭제
 st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
@@ -536,7 +529,7 @@ with tab1:
                     
                 except Exception as e: st.error(f"오류: {e}")
 
-# [탭 2] 포트폴리오 (모닝 브리핑 탑재)
+# [탭 2] 포트폴리오
 with tab2:
     st.subheader(f"💼 {st.session_state.user_id}님의 포트폴리오")
     with st.form("add_stock_form"):
@@ -561,8 +554,16 @@ with tab2:
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         
         edt_df = st.data_editor(dis_df, column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
-        if not edt_df.equals(dis_df.drop(columns=['현재가','수익금','수익률(%)'])):
-            st.session_state.portfolio[['매수단가','수량']] = edt_df[['매수단가','수량']]; save_portfolio(st.session_state.portfolio); st.rerun()
+        
+        # 💡 [버그 수정] 무한 깜빡임(무한 새로고침) 완벽 해결
+        orig_compare = st.session_state.portfolio[['매수단가', '수량']].astype(float)
+        new_compare = edt_df[['매수단가', '수량']].astype(float)
+        
+        if not orig_compare.equals(new_compare):
+            st.session_state.portfolio['매수단가'] = edt_df['매수단가']
+            st.session_state.portfolio['수량'] = edt_df['수량']
+            save_portfolio(st.session_state.portfolio)
+            st.rerun()
 
         st.markdown("---")
         
@@ -671,7 +672,6 @@ with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
     mode = st.radio("모드", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"])
     
-    # 💡 텔레그램 전송 체크박스를 기본적으로 켜둠 (value=True)
     send_to_telegram = st.checkbox("📱 스캔 완료 시 텔레그램으로 결과 전송", value=True)
     
     if st.button("🔎 검색 실행", type="primary", use_container_width=True):
@@ -741,7 +741,6 @@ with tab3:
             
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             
-            # 💡 텔레그램 전송
             if send_to_telegram and tele_token and tele_chat_id:
                 msg_text = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
                 for r in res[:10]:
