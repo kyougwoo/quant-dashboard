@@ -11,6 +11,7 @@ import numpy as np
 import os
 import time
 import re
+import ast
 
 # 💡 Firebase 클라우드 DB 라이브러리 로드 시도 및 원인 파악
 FIREBASE_IMPORT_ERROR = ""
@@ -62,17 +63,27 @@ def get_db():
             if isinstance(raw_json, str):
                 # 💡 방탄 1: 복사/붙여넣기 시 딸려오는 이상한 특수 공백(\xa0) 제거
                 raw_json = raw_json.replace('\xa0', ' ')
+                
+                # 💡 방탄 2: 표준 JSON 파싱 시도
                 try:
-                    # 💡 방탄 2: 찐 줄바꿈 기호가 섞여 있어도 강제로 파싱(strict=False)
                     key_dict = json.loads(raw_json, strict=False)
                 except:
-                    # 💡 방탄 3: 최후의 수단! json 포맷이 완전히 망가졌어도 정규식으로 필요한 키값만 강제 추출
+                    pass
+                
+                # 💡 방탄 3: 파이썬 AST 모듈로 실제 줄바꿈이 들어간 딕셔너리 안전 파싱
+                if not key_dict:
+                    try:
+                        s_py = raw_json.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+                        key_dict = ast.literal_eval(s_py)
+                    except:
+                        pass
+                
+                # 💡 방탄 4: 최후의 수단! auth_uri 누락 없이 모든 키와 값을 남김없이 추출!
+                if not key_dict:
                     key_dict = {}
-                    for k in ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "token_uri"]:
-                        m = re.search(f'"{k}"\\s*:\\s*"([^"]+)"', raw_json)
-                        if m: key_dict[k] = m.group(1)
-                    if "token_uri" not in key_dict:
-                        key_dict["token_uri"] = "https://oauth2.googleapis.com/token"
+                    matches = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', raw_json)
+                    for k, v in matches:
+                        key_dict[k] = v
             else:
                 key_dict = dict(raw_json)
                 
@@ -83,7 +94,7 @@ def get_db():
             st.error("❌ [원인 분석 2] 설정 오류: Streamlit Secrets 설정창에 입력한 키 값이 잘못되었습니다.")
             return None
             
-        # 💡 방탄 4: 추출된 private_key 안에 꼬여있는 줄바꿈 문자를 실제 줄바꿈으로 완벽히 복원
+        # 💡 방탄 5: 추출된 private_key 안에 꼬여있는 줄바꿈 문자를 실제 줄바꿈으로 완벽히 복원
         if isinstance(key_dict.get("private_key"), str):
             key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
             
