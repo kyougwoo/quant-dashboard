@@ -12,6 +12,14 @@ import os
 import time
 import re
 
+# 💡 Firebase 클라우드 DB 라이브러리 (설치 전 에러 방지용 예외 처리)
+try:
+    from google.cloud import firestore
+    from google.oauth2 import service_account
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+
 # ==========================================
 # 1. 페이지 설정 및 모바일 UX 최적화
 # ==========================================
@@ -19,11 +27,9 @@ st.set_page_config(page_title="클라우드 기법 퀀트", layout="wide", page_
 
 st.markdown("""
 <style>
-    /* 💡 사이드바 여는 메뉴(Header)는 살려두고, 불필요한 우측 메뉴만 지웁니다 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {background-color: transparent !important;}
-    
     @media (max-width: 768px) {
         .block-container { padding: 3rem 0.5rem 2rem 0.5rem !important; }
         h1 { font-size: 1.4rem !important; margin-bottom: 10px !important; line-height: 1.3 !important; }
@@ -39,77 +45,106 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. SaaS 회원 관리 및 포트폴리오
+# 2. Firebase DB 연결 및 SaaS 회원 관리
 # ==========================================
+@st.cache_resource
+def get_db():
+    if FIREBASE_AVAILABLE and "firebase" in st.secrets:
+        try:
+            key_dict = dict(st.secrets["firebase"])
+            creds = service_account.Credentials.from_service_account_info(key_dict)
+            return firestore.Client(credentials=creds)
+        except Exception as e:
+            st.warning(f"⚠️ Firebase 연결 오류: {e}")
+            return None
+    return None
+
+db = get_db()
+
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_id' not in st.session_state: st.session_state.user_id = 'guest'
 if 'user_tier' not in st.session_state: st.session_state.user_tier = 'Free'
 
 st.sidebar.title("👤 내 계정 (SaaS)")
 if not st.session_state.logged_in:
-    st.sidebar.info("💡 체험용: ID 'vip', PW '1234'")
-    login_id = st.sidebar.text_input("아이디")
+    st.sidebar.info("💡 처음 로그인 시 자동으로 계정이 생성됩니다.")
+    login_id = st.sidebar.text_input("아이디 (이메일)")
     login_pw = st.sidebar.text_input("비밀번호", type="password")
-    if st.sidebar.button("로그인", use_container_width=True):
-        if login_id == 'vip' and login_pw == '1234':
-            st.session_state.logged_in = True; st.session_state.user_id = 'vip_user'; st.session_state.user_tier = 'VIP'
-            st.sidebar.success("VIP님 환영합니다!"); st.rerun()
-        else:
-            st.session_state.logged_in = True; st.session_state.user_id = login_id if login_id else 'user'; st.session_state.user_tier = 'Free'
-            st.sidebar.success("로그인 되었습니다."); st.rerun()
+    
+    if st.sidebar.button("로그인 / 회원가입", use_container_width=True):
+        if login_id and login_pw:
+            if db:
+                # 💡 Firebase가 연결된 경우: 실제 DB 인증
+                user_ref = db.collection('users').document(login_id)
+                user_doc = user_ref.get()
+                if user_doc.exists:
+                    user_data = user_doc.to_dict()
+                    if user_data.get('password') == login_pw:
+                        st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = user_data.get('tier', 'Free')
+                        st.sidebar.success("로그인 성공!"); st.rerun()
+                    else:
+                        st.sidebar.error("❌ 비밀번호가 틀렸습니다.")
+                else:
+                    tier = 'VIP' if login_id.lower() == 'vip' else 'Free'
+                    user_ref.set({'password': login_pw, 'tier': tier, 'created_at': datetime.now()})
+                    st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = tier
+                    st.sidebar.success("🎉 회원가입 및 로그인 완료!"); st.rerun()
+            else:
+                # 💡 Firebase 세팅 전: 로컬(기존) 방식
+                st.session_state.logged_in = True; st.session_state.user_id = login_id
+                st.session_state.user_tier = 'VIP' if login_id == 'vip' else 'Free'
+                st.rerun()
 else:
-    st.sidebar.success(f"안녕하세요, **{st.session_state.user_id}**님!")
+    st.sidebar.success(f"환영합니다, **{st.session_state.user_id}**님!")
     st.sidebar.write(f"🌟 현재 등급: **{st.session_state.user_tier}**")
     if st.sidebar.button("로그아웃", use_container_width=True):
         st.session_state.logged_in = False; st.session_state.user_id = 'guest'; st.session_state.user_tier = 'Free'; st.rerun()
 
+# 환경 설정
 st.sidebar.markdown("---")
-st.sidebar.title("⚙️ AI 설정")
-if "GEMINI_API_KEY" in st.secrets:
-    gemini_api_key = st.secrets["GEMINI_API_KEY"]
-    st.sidebar.success("✅ 시스템 AI 키 연동 완료")
-else:
-    gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
+st.sidebar.title("⚙️ 시스템 설정")
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not gemini_api_key: gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
+else: st.sidebar.success("✅ AI 엔진 연동 완료")
 
-# 💡 텔레그램 봇 설정 사이드바 추가
+if db: st.sidebar.success("☁️ Firebase 클라우드 DB 연동 완료")
+else: st.sidebar.warning("⚠️ Firebase 미연동 (로컬 저장모드)")
+
 st.sidebar.markdown("---")
 st.sidebar.title("🔔 텔레그램 알림 설정")
-if "TELEGRAM_TOKEN" in st.secrets and "TELEGRAM_CHAT_ID" in st.secrets:
-    tele_token = st.secrets["TELEGRAM_TOKEN"]
-    tele_chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-    st.sidebar.success("✅ 텔레그램 봇 연동 완료")
+tele_token = st.secrets.get("TELEGRAM_TOKEN", "")
+tele_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+if tele_token and tele_chat_id: st.sidebar.success("✅ 텔레그램 봇 연동 완료")
 else:
-    tele_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather에서 발급받은 토큰")
-    tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="내 텔레그램 고유 숫자 ID")
+    tele_token = st.sidebar.text_input("Telegram Bot Token", type="password")
+    tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
 
-# 💡 텔레그램 전송 함수 강화 (에러 파악 및 안전한 HTML 방식 적용)
 def send_telegram_message(token, chat_id, text):
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML" # 특수기호 충돌을 막기 위해 HTML 방식 사용
-    }
     try:
-        response = requests.post(url, json=payload, timeout=5)
-        if response.status_code != 200:
-            st.error(f"❌ 텔레그램 전송 실패 ({response.status_code}): {response.text}")
-            return False
+        res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+        if res.status_code != 200: st.error(f"❌ 텔레그램 실패: {res.text}"); return False
         return True
-    except Exception as e:
-        st.error(f"❌ 텔레그램 네트워크 오류: {e}")
-        return False
+    except Exception as e: st.error(f"❌ 네트워크 오류: {e}"); return False
 
-def get_portfolio_file(): return f'portfolio_data_{st.session_state.user_id}.csv'
-
+# 💡 클라우드 DB 기반 포트폴리오 저장/불러오기
 def load_portfolio():
-    file_name = get_portfolio_file()
-    if os.path.exists(file_name):
-        try: return pd.read_csv(file_name)
-        except: return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
-    return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+    if db:
+        doc = db.collection('portfolios').document(st.session_state.user_id).get()
+        if doc.exists and 'stocks' in doc.to_dict():
+            return pd.DataFrame(doc.to_dict()['stocks'])
+        return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+    else:
+        file_name = f'portfolio_data_{st.session_state.user_id}.csv'
+        if os.path.exists(file_name):
+            try: return pd.read_csv(file_name)
+            except: pass
+        return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
 
-def save_portfolio(df): df.to_csv(get_portfolio_file(), index=False)
+def save_portfolio(df):
+    if db:
+        db.collection('portfolios').document(st.session_state.user_id).set({'stocks': df.to_dict('records')})
+    else:
+        df.to_csv(f'portfolio_data_{st.session_state.user_id}.csv', index=False)
 
 if 'portfolio' not in st.session_state or 'current_user' not in st.session_state or st.session_state.current_user != st.session_state.user_id:
     st.session_state.portfolio = load_portfolio()
@@ -157,8 +192,7 @@ def get_top_200_stocks():
 def get_us_top_stocks():
     try:
         df = fdr.StockListing('S&P500')
-        top_100 = df.head(100)
-        return dict(zip(top_100['Name'], top_100['Symbol']))
+        return dict(zip(df.head(100)['Name'], df.head(100)['Symbol']))
     except:
         return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA", "Microsoft":"MSFT", "Alphabet":"GOOGL", "Amazon":"AMZN", "Meta":"META"}
 
@@ -264,7 +298,7 @@ def format_price(price, ticker):
     else: return f"${price:.2f}"
 
 # ==========================================
-# 4. 메인 대시보드 UI (SaaS 디자인)
+# 4. 메인 대시보드 UI
 # ==========================================
 st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
@@ -452,7 +486,6 @@ with tab3:
         
         if res:
             df_res = pd.DataFrame(res).sort_values(by="통과 개수", ascending=False)
-            
             st.dataframe(
                 df_res, 
                 use_container_width=True, 
@@ -466,7 +499,6 @@ with tab3:
             
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             
-            # 💡 텔레그램 메시지를 HTML 포맷에 맞게 재작성
             if send_to_telegram and tele_token and tele_chat_id:
                 msg_text = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
                 for r in res[:10]:
