@@ -72,18 +72,27 @@ def init_db():
         em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
         client_email = em.group(1) if em else None
         
-        # 3. 망가진 private_key 수학적 복원
-        pk_match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_s, re.DOTALL)
-        private_key = None
+        # 💡 3. 가장 중요한 암호문(Private Key) 추출 및 잘림(Truncation) 완벽 진단!
+        pk_start = raw_s.find("-----BEGIN PRIVATE KEY-----")
+        pk_end = raw_s.find("-----END PRIVATE KEY-----")
         
-        if pk_match:
-            pk_body = pk_match.group(1)
-            pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_body)
-            chunks = textwrap.wrap(pk_body, 64)
-            private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
+        if pk_start == -1:
+            return None, "❌ [에러 3A] 암호문 시작점(BEGIN PRIVATE KEY)이 없습니다. 설정창(Secrets) 내용을 확인해주세요."
             
-        if not project_id or not client_email or not private_key:
-            return None, "❌ [에러 3] 암호문(Private Key) 추출 실패. Secrets에 붙여넣으신 JSON 내용이 일부 잘려나갔을 수 있습니다."
+        if pk_end == -1:
+            # 복사 과정에서 끝부분이 잘렸음이 100% 확실함!
+            last_chars = raw_s[-100:] if len(raw_s) > 100 else raw_s
+            return None, f"❌ [에러 3B] 암호문 끝부분(END PRIVATE KEY)이 잘려나갔습니다!\n\n💡 복사하신 내용의 마지막 100글자:\n`{last_chars}`\n\n👉 해결법: 메모장에서 JSON 파일을 여신 후, 마우스 드래그 대신 키보드 단축키 **(Ctrl + A)** 를 눌러 전체 선택 후 다시 복사해서 붙여넣어주세요!"
+        
+        # 정상적으로 양쪽 끝이 다 있다면 수학적 복원 진행
+        pk_raw = raw_s[pk_start : pk_end + 25]
+        pk_body = pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_body)
+        chunks = textwrap.wrap(pk_body, 64)
+        private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
+            
+        if not project_id or not client_email:
+            return None, "❌ [에러 4] 프로젝트 ID나 이메일 주소를 찾을 수 없습니다."
             
         # 4. 완벽하게 소독된 데이터로 접속
         creds_dict = {
@@ -366,7 +375,7 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(완전체)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(V5 종결)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
 
