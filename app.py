@@ -12,7 +12,7 @@ import os
 import time
 import re
 import ast
-import textwrap # 💡 암호문 재조립을 위한 필수 모듈
+import textwrap
 
 # 💡 Firebase 클라우드 DB 라이브러리 로드 시도 및 원인 파악
 FIREBASE_IMPORT_ERROR = ""
@@ -49,49 +49,48 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (최후의 완벽 재조립 엔진)
+# 2. Firebase DB 연결 (V4 무적 스캐너 + 자가진단 탑재)
 # ==========================================
 @st.cache_resource
 def get_db():
     if not FIREBASE_AVAILABLE:
-        st.error(f"❌ [에러 1] 라이브러리 누락: requirements.txt 파일에 google-cloud-firestore를 확인하세요.")
+        st.error("🚨 치명적 오류: 클라우드 서버에 Firebase 부품이 없습니다!")
+        st.info("💡 [해결 가이드]\n1. 깃허브에 `requirements.txt` 파일이 있나요? (끝에 s가 빠진 requirement.txt면 안 됩니다!)\n2. 그 파일 안에 `google-cloud-firestore` 라고 정확히 적혀있나요?\n3. 둘 다 맞다면 Streamlit 화면 우측 하단의 [Manage app] ➡️ [Delete] 로 앱을 삭제 후 다시 [Deploy] 해보세요.")
         return None
         
     try:
         raw_s = ""
-        # 1. 설정창에서 글자 덩어리 무식하게 전체 가져오기
+        # 1. 설정창(Secrets)에서 글자 가져오기
         if "FIREBASE_JSON" in st.secrets:
             raw_s = str(st.secrets["FIREBASE_JSON"])
         elif "firebase" in st.secrets:
             raw_s = str(dict(st.secrets["firebase"]))
         else:
-            st.error("❌ [에러 2] Secrets에 Firebase 설정이 비어있습니다.")
+            st.error("❌ [에러 2] Streamlit 설정창(Secrets)이 완전히 텅 비어있거나 키를 찾을 수 없습니다.")
             return None
 
-        # 2. 어떻게 깨져있든 정규식으로 핵심 데이터 3개만 강제 스캔
+        # 2. 정규식으로 핵심 데이터 강제 스캔
         pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
         project_id = pm.group(1) if pm else None
         
         em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
         client_email = em.group(1) if em else None
         
-        # 💡 3. [가장 중요] 망가진 private_key를 구글 규격에 맞춰 수학적으로 완벽 복원!
+        # 3. 망가진 private_key 수학적 복원
         pk_match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_s, re.DOTALL)
         private_key = None
         
         if pk_match:
             pk_body = pk_match.group(1)
-            # 모든 공백, 찌꺼기, 깨진 줄바꿈 기호를 싹 다 갈아엎어버림 (오직 Base64 문자만 남김)
             pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_body)
-            # 구글 인증 규격에 맞게 정확히 64글자 단위로 잘라서 깨끗한 줄바꿈을 넣어 재조립!
             chunks = textwrap.wrap(pk_body, 64)
             private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
             
         if not project_id or not client_email or not private_key:
-            st.error("❌ [에러 3] 키를 추출하지 못했습니다. (비밀키가 잘렸을 수 있습니다)")
+            st.error("❌ [에러 3] 암호문(Private Key) 추출 실패. Secrets에 붙여넣으신 JSON 내용이 일부 잘려나갔을 수 있습니다.")
             return None
             
-        # 4. 완벽하게 소독된 데이터로 접속 시도!
+        # 4. 완벽하게 소독된 데이터로 접속
         creds_dict = {
             "type": "service_account",
             "project_id": project_id,
@@ -104,7 +103,7 @@ def get_db():
         return firestore.Client(credentials=creds, project=project_id)
         
     except Exception as e:
-        st.error(f"❌ [최종 에러] 접속 실패: {e}")
+        st.error(f"❌ [최종 에러] 구글 서버 접속 거부: {e}")
         import traceback
         st.code(traceback.format_exc())
         return None
@@ -153,28 +152,41 @@ else:
 # 환경 설정
 st.sidebar.markdown("---")
 st.sidebar.title("⚙️ 시스템 설정")
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+
+# 💡 API 키 양옆의 띄어쓰기(공백)를 강제로 제거하는 완벽 처리 (.strip() 추가)
+gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
 if not gemini_api_key: gemini_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 else: st.sidebar.success("✅ AI 엔진 연동 완료")
 
-if db: st.sidebar.success("☁️ Firebase 클라우드 DB 연동 완료")
-else: st.sidebar.warning("⚠️ Firebase 미연동 (로컬 저장모드)")
+if db: 
+    st.sidebar.success("☁️ Firebase 클라우드 DB 연동 완료")
+else: 
+    st.sidebar.warning("⚠️ Firebase 미연동 (로컬 저장모드)")
+    if st.sidebar.button("🔍 연결 에러 원인 1초 진단하기"):
+        st.sidebar.error("화면 상단에 출력된 ❌ 에러 메시지를 확인해주세요! (글자가 안 보인다면 화면을 위로 올려보세요)")
 
 st.sidebar.markdown("---")
 st.sidebar.title("🔔 텔레그램 알림 설정")
-tele_token = st.secrets.get("TELEGRAM_TOKEN", "")
-tele_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+
+# 💡 텔레그램 토큰과 아이디 끝에 실수로 들어간 스페이스바 공백 강제 제거 (.strip() 추가)
+tele_token = str(st.secrets.get("TELEGRAM_TOKEN", "")).strip()
+tele_chat_id = str(st.secrets.get("TELEGRAM_CHAT_ID", "")).strip()
+
 if tele_token and tele_chat_id: st.sidebar.success("✅ 텔레그램 봇 연동 완료")
 else:
-    tele_token = st.sidebar.text_input("Telegram Bot Token", type="password")
-    tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
+    tele_token = st.sidebar.text_input("Telegram Bot Token", type="password").strip()
+    tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password").strip()
 
 def send_telegram_message(token, chat_id, text):
     try:
         res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
-        if res.status_code != 200: st.error(f"❌ 텔레그램 실패: {res.text}"); return False
+        if res.status_code != 200: 
+            st.error(f"❌ 텔레그램 전송 실패: {res.text}")
+            return False
         return True
-    except Exception as e: st.error(f"❌ 네트워크 오류: {e}"); return False
+    except Exception as e: 
+        st.error(f"❌ 네트워크 오류: {e}")
+        return False
 
 # 💡 클라우드 DB 기반 포트폴리오 저장/불러오기
 def load_portfolio():
@@ -351,8 +363,7 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-# 💡 서버가 최신 코드를 읽어왔는지 확인하기 위한 (V2) 표시 추가!
-st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(V2)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(완성판)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
 
@@ -486,7 +497,8 @@ with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
     mode = st.radio("모드", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"])
     
-    send_to_telegram = st.checkbox("📱 스캔 완료 시 텔레그램으로 결과 전송", value=False)
+    # 💡 텔레그램 전송 체크박스를 기본적으로 켜둠 (value=True)
+    send_to_telegram = st.checkbox("📱 스캔 완료 시 텔레그램으로 결과 전송", value=True)
     
     if st.button("🔎 검색 실행", type="primary", use_container_width=True):
         if "VIP" in mode and st.session_state.user_tier != 'VIP':
@@ -521,7 +533,7 @@ with tab3:
                         
                         res.append({
                             "종목명": n, 
-                            "매 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
+                            "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
                             "통과 개수": f"{sc}/4", 
                             "월봉 장기추세": "🟢 안전",
                             "주가 > 200일선": "✅" if ind["Cloud_Rules"]["주가 > 200일선"] else "❌",
@@ -553,6 +565,7 @@ with tab3:
             
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             
+            # 💡 텔레그램 전송
             if send_to_telegram and tele_token and tele_chat_id:
                 msg_text = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
                 for r in res[:10]:
