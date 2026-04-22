@@ -66,13 +66,28 @@ def get_db():
             st.error("❌ [원인 분석 2] 설정 누락: Streamlit Secrets 설정창에 `FIREBASE_JSON` 값이 비어있거나 올바르지 않습니다.")
             return None
             
-        creds = service_account.Credentials.from_service_account_info(key_dict)
-        return firestore.Client(credentials=creds)
+        # 💡 [핵심 해결] 복사/붙여넣기 시 발생하는 보이지 않는 공백 및 줄바꿈(\n) 오류 완벽 제거
+        clean_dict = {}
+        for k, v in key_dict.items():
+            clean_key = str(k).strip()
+            clean_dict[clean_key] = str(v).strip() if isinstance(v, str) else v
+            
+        if "private_key" in clean_dict:
+            clean_dict["private_key"] = clean_dict["private_key"].replace("\\n", "\n")
+            
+        creds = service_account.Credentials.from_service_account_info(clean_dict)
+        
+        # 💡 [핵심 해결] project_id를 명시적으로 주입하여 'NoneType iterable' 에러 원천 차단
+        project_id = clean_dict.get("project_id")
+        return firestore.Client(credentials=creds, project=project_id)
+        
     except json.JSONDecodeError:
         st.error("❌ [원인 분석 3] 문법 오류: Secrets에 입력한 JSON 내용에 오타가 있습니다. 쉼표(,)나 따옴표(\")를 확인하세요.")
         return None
     except Exception as e:
         st.error(f"❌ [원인 분석 4] 알 수 없는 오류: {e}")
+        import traceback
+        st.code(traceback.format_exc()) # 만약 또 에러가 나면 정확한 위치를 화면에 띄워줍니다.
         return None
 
 db = get_db()
