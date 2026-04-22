@@ -132,22 +132,28 @@ if not st.session_state.logged_in:
     if st.sidebar.button("로그인 / 회원가입", use_container_width=True):
         if login_id and login_pw:
             if db:
-                user_ref = db.collection('users').document(login_id)
-                user_doc = user_ref.get()
-                if user_doc.exists:
-                    user_data = user_doc.to_dict()
-                    if user_data.get('password') == login_pw:
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = login_id
-                        st.session_state.user_tier = user_data.get('tier', 'Free')
-                        st.sidebar.success("로그인 성공!"); st.rerun()
+                try:
+                    user_ref = db.collection('users').document(login_id)
+                    user_doc = user_ref.get()
+                    if user_doc.exists:
+                        user_data = user_doc.to_dict()
+                        if user_data.get('password') == login_pw:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = login_id
+                            st.session_state.user_tier = user_data.get('tier', 'Free')
+                            st.sidebar.success("로그인 성공!"); st.rerun()
+                        else:
+                            st.sidebar.error("❌ 비밀번호가 틀렸습니다.")
                     else:
-                        st.sidebar.error("❌ 비밀번호가 틀렸습니다.")
-                else:
-                    tier = 'VIP' if login_id.lower() == 'vip' else 'Free'
-                    user_ref.set({'password': login_pw, 'tier': tier, 'created_at': datetime.now()})
-                    st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = tier
-                    st.sidebar.success("🎉 회원가입 및 로그인 완료!"); st.rerun()
+                        tier = 'VIP' if login_id.lower() == 'vip' else 'Free'
+                        user_ref.set({'password': login_pw, 'tier': tier, 'created_at': datetime.now()})
+                        st.session_state.logged_in = True; st.session_state.user_id = login_id; st.session_state.user_tier = tier
+                        st.sidebar.success("🎉 회원가입 및 로그인 완료!"); st.rerun()
+                except Exception as e:
+                    if "PermissionDenied" in str(e) or "403" in str(e):
+                        st.sidebar.error("🚨 데이터베이스 생성 대기중... Firebase 콘솔에서 [Firestore Database]를 '테스트 모드'로 만들어주세요!")
+                    else:
+                        st.sidebar.error(f"DB 오류 발생: {e}")
             else:
                 st.session_state.logged_in = True; st.session_state.user_id = login_id
                 st.session_state.user_tier = 'VIP' if login_id == 'vip' else 'Free'
@@ -169,9 +175,9 @@ else: st.sidebar.success("✅ AI 엔진 연동 완료")
 
 # 💡 사이드바에 Firebase 에러를 영구적으로 박제하여 보여줍니다.
 if db: 
-    st.sidebar.success("☁️ Firebase 클라우드 DB 연동 완료")
+    st.sidebar.success("☁️ Firebase 클라우드 DB 접속 완료")
 else: 
-    st.sidebar.warning("⚠️ Firebase 미연동 (로컬 저장모드)")
+    st.sidebar.warning("⚠️ Firebase 접속 실패 (로컬 저장모드)")
     st.sidebar.error(st.session_state.db_msg)
     if st.sidebar.button("🔄 Firebase 연결 재시도"):
         del st.session_state['db_client']
@@ -203,22 +209,30 @@ def send_telegram_message(token, chat_id, text):
 # 💡 클라우드 DB 기반 포트폴리오 저장/불러오기
 def load_portfolio():
     if db:
-        doc = db.collection('portfolios').document(st.session_state.user_id).get()
-        if doc.exists and 'stocks' in doc.to_dict():
-            return pd.DataFrame(doc.to_dict()['stocks'])
-        return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
-    else:
-        file_name = f'portfolio_data_{st.session_state.user_id}.csv'
-        if os.path.exists(file_name):
-            try: return pd.read_csv(file_name)
-            except: pass
-        return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
+        try:
+            doc = db.collection('portfolios').document(st.session_state.user_id).get()
+            if doc.exists and 'stocks' in doc.to_dict():
+                return pd.DataFrame(doc.to_dict()['stocks'])
+        except Exception as e:
+            if "PermissionDenied" in str(e) or "403" in str(e):
+                st.toast("⚠️ Firestore 데이터베이스가 '테스트 모드'로 생성되지 않아 로컬 모드로 동작합니다.")
+    # 로컬 저장 Fallback
+    file_name = f'portfolio_data_{st.session_state.user_id}.csv'
+    if os.path.exists(file_name):
+        try: return pd.read_csv(file_name)
+        except: pass
+    return pd.DataFrame(columns=['종목명', '매수단가', '수량'])
 
 def save_portfolio(df):
     if db:
-        db.collection('portfolios').document(st.session_state.user_id).set({'stocks': df.to_dict('records')})
-    else:
-        df.to_csv(f'portfolio_data_{st.session_state.user_id}.csv', index=False)
+        try:
+            db.collection('portfolios').document(st.session_state.user_id).set({'stocks': df.to_dict('records')})
+            return
+        except Exception as e:
+            if "PermissionDenied" in str(e) or "403" in str(e):
+                st.toast("⚠️ Firestore 권한 없음. 로컬에 저장합니다. (콘솔에서 DB를 생성하세요)")
+    # 로컬 저장 Fallback
+    df.to_csv(f'portfolio_data_{st.session_state.user_id}.csv', index=False)
 
 if 'portfolio' not in st.session_state or 'current_user' not in st.session_state or st.session_state.current_user != st.session_state.user_id:
     st.session_state.portfolio = load_portfolio()
@@ -375,7 +389,7 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(V5 종결)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(모닝 브리핑 탑재)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
 
@@ -440,24 +454,60 @@ with tab1:
             except: st.error("데이터 부족")
 
     if df is not None and not df.empty:
-        if st.button("🚀 클라우드 AI 정밀 분석", type="primary", use_container_width=True):
-            with st.spinner("AI 분석 중... (API 제한 시 최대 30초 대기)"):
+        st.markdown("---")
+        st.markdown("### 🤖 Harness 3-Agent AI 분석 엔진")
+        st.caption("기술적 분석가, 기본적 분석가, 리스크 관리자가 데이터를 다각도로 분석하여 최종 결론을 도출합니다.")
+        
+        if st.button("🚀 3-Agent 분석 실행", type="primary", use_container_width=True):
+            with st.spinner("3명의 AI 에이전트가 토론 중입니다... (약 10~20초 소요)"):
                 prompt = f"""
-                종목: {actual_name}, 단기 클라우드 통과: {sum(1 for v in tech_ind["Cloud_Rules"].values() if v)}/4
-                월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험(저승사자)'}
-                손절가: {format_price(stop_loss, ticker)}, 뉴스: {get_recent_news(actual_name)}
-                위험 상태면 무조건 관망/매도 지시해. JSON 응답: {{"technicalAgent": {{"score": 8, "reasoning": "..."}}, "fundamentalAgent": {{"score": 6, "reasoning": "..."}}, "riskManager": {{"action": "매수", "positionSize": "20%", "reasoning": "..."}}}}
+                당신은 'Harness 3-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다.
+                아래 종목의 시장 데이터를 바탕으로 3명의 에이전트(기술적 분석가, 기본적 분석가, 리스크 관리자)의 시각에서 심층 분석을 수행하세요.
+
+                [분석 대상 데이터]
+                - 종목명: {actual_name}
+                - 단기 클라우드 통과: {sum(1 for v in tech_ind["Cloud_Rules"].values() if v)}/4
+                - 월봉 10선 추세: {'안전(상승추세)' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험(하락추세)'}
+                - 터틀 손절가: {format_price(stop_loss, ticker)}
+                - 최근 주요 뉴스: {get_recent_news(actual_name)}
+
+                [출력 형식 (반드시 유효한 JSON 형식으로만 응답할 것)]
+                {{
+                  "technicalAgent": {{
+                    "score": -10부터 10 사이의 정수 (10이 강력 매수),
+                    "reasoning": "기술적 분석가 에이전트의 차트 및 추세 기반 심층 분석 의견 (3~4문장)"
+                  }},
+                  "fundamentalAgent": {{
+                    "score": -10부터 10 사이의 정수 (10이 강력 호재),
+                    "reasoning": "기본적 분석가 에이전트의 뉴스 감성 및 모멘텀 기반 심층 분석 의견 (3~4문장)"
+                  }},
+                  "riskManager": {{
+                    "action": "매수", "매도", 또는 "관망" 중 택 1 (월봉 10선 위험 시 무조건 보수적 접근),
+                    "positionSize": "비중 0% ~ 100% 제시",
+                    "reasoning": "앞선 두 에이전트의 의견을 종합하여 리스크 관리자가 내리는 최종 결론 (3~4문장)"
+                  }}
+                }}
                 """
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
-                    st.success("✅ 분석 완료!")
-                    c1, c2, c3 = st.columns(3)
-                    with c1: st.metric("차트 점수", f"{res['technicalAgent']['score']}점"); st.caption(res['technicalAgent']['reasoning'])
-                    with c2: st.metric("뉴스 점수", f"{res['fundamentalAgent']['score']}점"); st.caption(res['fundamentalAgent']['reasoning'])
-                    with c3: st.metric(f"포지션: {res['riskManager']['action']}", f"비중: {res['riskManager']['positionSize']}"); st.caption(res['riskManager']['reasoning'])
+                    st.success("✅ 3-Agent 분석 완료!")
+                    
+                    st.markdown(f"#### 📈 Agent 1: 기술적 분석가 (Score: {res['technicalAgent']['score']}/10)")
+                    st.info(res['technicalAgent']['reasoning'])
+                    
+                    st.markdown(f"#### 📰 Agent 2: 기본적 분석가 (Score: {res['fundamentalAgent']['score']}/10)")
+                    st.warning(res['fundamentalAgent']['reasoning'])
+                    
+                    st.markdown("#### 🛡️ Agent 3: 리스크 관리자 (최종 판단)")
+                    st.success(res['riskManager']['reasoning'])
+                    
+                    c1, c2 = st.columns(2)
+                    c1.metric("최종 포지션 제안", res['riskManager']['action'])
+                    c2.metric("추천 투자 비중", res['riskManager']['positionSize'])
+                    
                 except Exception as e: st.error(f"오류: {e}")
 
-# [탭 2] 포트폴리오
+# [탭 2] 포트폴리오 (모닝 브리핑 탑재)
 with tab2:
     st.subheader(f"💼 {st.session_state.user_id}님의 포트폴리오")
     with st.form("add_stock_form"):
@@ -485,22 +535,106 @@ with tab2:
         if not edt_df.equals(dis_df.drop(columns=['현재가','수익금','수익률(%)'])):
             st.session_state.portfolio[['매수단가','수량']] = edt_df[['매수단가','수량']]; save_portfolio(st.session_state.portfolio); st.rerun()
 
-        if st.button("✨ 포트폴리오 AI 진단", type="primary", use_container_width=True):
-            with st.spinner("진단 중..."):
-                txt = ""
-                for _, r in dis_df.iterrows():
-                    _, tck = get_stock_info(r['종목명']); stat = "불가"
-                    if tck:
-                        try:
-                            df, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
-                            if ind: stat = f"월봉10선({'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}), 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
-                        except: pass
-                    txt += f"- {r['종목명']}: 수익 {r['수익률(%)']:.2f}%, 상태: {stat}\n"
-                
-                try:
-                    res = get_ai_analysis(f"월봉10선 위험이면 전량매도 권고해. [포트폴리오]\n{txt}\n응답: {{\"results\": [{{\"stock\": \"명\", \"action\": \"매도\", \"reason\": \"...\"}}]}}", gemini_api_key)
-                    for i in res.get("results", []): st.info(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                except Exception as e: st.error(f"오류: {e}")
+        st.markdown("---")
+        
+        # 💡 [업그레이드] 기존 개별 진단 버튼과 신규 모닝 브리핑 버튼을 나란히 배치!
+        btn_col1, btn_col2 = st.columns(2)
+        
+        with btn_col1:
+            if st.button("✨ 포트폴리오 AI 개별 진단", use_container_width=True):
+                with st.spinner("개별 종목 정밀 진단 중..."):
+                    txt = ""
+                    for _, r in dis_df.iterrows():
+                        _, tck = get_stock_info(r['종목명']); stat = "불가"
+                        if tck:
+                            try:
+                                df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                                if ind: stat = f"월봉10선({'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}), 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
+                            except: pass
+                        txt += f"- {r['종목명']}: 수익 {r['수익률(%)']:.2f}%, 상태: {stat}\n"
+                    
+                    try:
+                        res = get_ai_analysis(f"월봉10선 위험이면 전량매도 권고해. [포트폴리오]\n{txt}\n응답: {{\"results\": [{{\"stock\": \"명\", \"action\": \"매도\", \"reason\": \"...\"}}]}}", gemini_api_key)
+                        for i in res.get("results", []): st.info(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
+                    except Exception as e: st.error(f"오류: {e}")
+
+        with btn_col2:
+            if st.button("🌅 오늘의 모닝 브리핑 생성", type="primary", use_container_width=True):
+                with st.spinner("밤사이 글로벌 증시 동향과 보유 포트폴리오를 종합 분석 중입니다... (약 15~30초 소요)"):
+                    try:
+                        # 1. 글로벌/국내 시장 뉴스 수집
+                        market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
+                        
+                        # 2. 포트폴리오 보유 종목들의 최신 지표 싹쓸이
+                        portfolio_context = ""
+                        for _, r in dis_df.iterrows():
+                            name = r['종목명']
+                            profit = r['수익률(%)']
+                            _, tck = get_stock_info(name)
+                            stat = "데이터 부족"
+                            stop_loss_val = 0
+                            news_list = []
+                            if tck:
+                                try:
+                                    df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                                    if ind: 
+                                        stop_loss_val = float(df_stock['Close'].iloc[-1]) - (float(ind.get('ATR', 0)) * 2)
+                                        stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, 200일선={'돌파' if ind['Cloud_Rules']['주가 > 200일선'] else '이탈'}"
+                                    news_list = get_recent_news(name)[:2]
+                                except: pass
+                            portfolio_context += f"- [{name}] 현재수익률: {profit:.2f}%, 터틀손절가: {format_price(stop_loss_val, tck)}, 지표상태: {stat}, 최근뉴스: {news_list}\n"
+                        
+                        # 3. AI에게 모닝 브리핑 작성을 지시하는 프롬프트
+                        briefing_prompt = f"""
+                        당신은 최고 수준의 글로벌 퀀트 투자 전략가입니다.
+                        사용자의 전체 포트폴리오와 간밤의 시장 뉴스 데이터를 바탕으로 '오늘의 포트폴리오 대응 전략 (모닝 브리핑)'을 작성해주세요.
+
+                        [간밤의 주요 시장 뉴스]
+                        {market_news}
+
+                        [보유 포트폴리오 상세 데이터]
+                        {portfolio_context}
+
+                        [출력 형식 (반드시 유효한 JSON 형식으로 응답)]
+                        {{
+                          "market_overview": "글로벌 및 국내 시장 동향을 바탕으로 한 오늘 장 요약 (3~4문장)",
+                          "stock_briefings": [
+                            {{
+                              "stock": "종목명",
+                              "alert_level": "🟢 안전", "🟡 주의", "🔴 위험" 중 하나 선택,
+                              "strategy": "해당 종목의 차트, 수익률, 뉴스를 종합한 구체적 대응 전략 (예: 기술주 하락 영향으로 터틀 손절가 위협 가능성 있음 등, 2~3문장)"
+                            }}
+                          ],
+                          "action_plan": "오늘 하루 포트폴리오 전반을 아우르는 핵심 행동 지침 (1~2문장)"
+                        }}
+                        """
+                        
+                        res = get_ai_analysis(briefing_prompt, gemini_api_key)
+                        
+                        # 4. 브리핑 결과 예쁘게 출력하기
+                        st.success("✅ 굿모닝! 오늘의 브리핑이 도착했습니다.")
+                        
+                        st.markdown("### 🌐 밤사이 시장 동향 (Market Overview)")
+                        st.info(res.get("market_overview", "시장 동향을 불러오지 못했습니다."))
+                        
+                        st.markdown("### 🎯 종목별 맞춤 대응 전략")
+                        for stock in res.get("stock_briefings", []):
+                            alert_level = stock.get("alert_level", "🟡 주의")
+                            strategy = stock.get("strategy", "")
+                            
+                            if "안전" in alert_level:
+                                st.success(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                            elif "위험" in alert_level:
+                                st.error(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                            else:
+                                st.warning(f"**{stock['stock']}** ({alert_level}) : {strategy}")
+                                
+                        st.markdown("### 💡 핵심 행동 지침 (Action Plan)")
+                        st.markdown(f"> **{res.get('action_plan', '')}**")
+                        
+                    except Exception as e: 
+                        st.error(f"브리핑 생성 중 오류가 발생했습니다: {e}")
+                    
         if st.button("🗑️ 선택 삭제"): st.warning("수량을 0으로 만들면 삭제됩니다.")
     else: st.info("등록된 종목이 없습니다.")
 
