@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (초강력 문자열 스캐너 탑재)
+# 2. Firebase DB 연결 (궁극의 디버깅 및 방탄 엔진)
 # ==========================================
 @st.cache_resource
 def get_db():
@@ -58,44 +58,55 @@ def get_db():
         
     try:
         key_dict = {}
+        debug_log = []
         
-        # 💡 [핵심 해결] Streamlit 파싱 버그를 무시하고 텍스트에서 직접 데이터 추출
-        if "FIREBASE_JSON" in st.secrets:
-            raw_str = str(st.secrets["FIREBASE_JSON"])
-            raw_str = raw_str.replace('\xa0', ' ') # 특수 공백 제거
+        # 💡 [방식 1] firebase 섹션으로 선언된 경우
+        if "firebase" in st.secrets and hasattr(st.secrets["firebase"], "items"):
+            key_dict = dict(st.secrets["firebase"])
+            debug_log.append("TOML [firebase] 블록 인식")
             
-            # 구글 인증에 필요한 11가지 핵심 키값 스캔
-            keys = [
-                "type", "project_id", "private_key_id", "private_key", 
-                "client_email", "client_id", "auth_uri", "token_uri", 
-                "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
-            ]
+        # 💡 [방식 2] FIREBASE_JSON으로 선언된 경우 (대표님 설정 방식)
+        if not key_dict and "FIREBASE_JSON" in st.secrets:
+            fj = st.secrets["FIREBASE_JSON"]
             
-            for k in keys:
-                # 문법이 깨졌어도 "키" : "값" 형태만 맞으면 강제로 뽑아옵니다.
-                match = re.search(f'"{k}"\\s*:\\s*"([^"]+)"', raw_str)
-                if match:
-                    val = match.group(1)
-                    val = val.replace('\\n', '\n') # 꼬인 줄바꿈 정상화
-                    key_dict[k] = val
-
-        # 만약 FIREBASE_JSON 방식이 실패했다면 기존 TOML [firebase] 블록 방식 시도
-        if not key_dict or "project_id" not in key_dict:
-            if "firebase" in st.secrets:
+            if hasattr(fj, "items"):
+                key_dict = dict(fj)
+                debug_log.append("TOML 딕셔너리 파싱 인식")
+                
+            elif isinstance(fj, str):
+                s = fj.strip().replace('\xa0', ' ')
+                
+                # 1단계: 정상적인 JSON 파싱 시도
                 try:
-                    key_dict = {k: v for k, v in st.secrets["firebase"].items()}
-                    if "private_key" in key_dict and isinstance(key_dict["private_key"], str):
-                        key_dict["private_key"] = key_dict["private_key"].replace('\\n', '\n')
+                    key_dict = json.loads(s, strict=False)
+                    debug_log.append("표준 JSON 파싱 성공")
                 except:
-                    pass
+                    # 2단계: 문법이 깨졌다면 정규식으로 핵심 키 11개 강제 추출
+                    debug_log.append("표준 JSON 실패 -> 정규식 강제 추출 시도")
+                    keys = [
+                        "type", "project_id", "private_key_id", "private_key", 
+                        "client_email", "client_id", "auth_uri", "token_uri", 
+                        "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
+                    ]
+                    for k in keys:
+                        # 작은따옴표(')나 큰따옴표(") 모두 인식하고 내용을 강제로 긁어옴
+                        match = re.search(rf'[\'"]{k}[\'"]\s*:\s*[\'"](.*?)[\'"](?=\s*[,}}])', s, re.DOTALL)
+                        if match:
+                            key_dict[k] = match.group(1)
 
-        # 💡 필수 데이터 최종 확인
-        if not key_dict or "project_id" not in key_dict or "private_key" not in key_dict:
-            st.error("❌ [원인 분석 2] Streamlit Secrets 설정창에서 키를 찾을 수 없거나 형식이 완전히 잘못되었습니다.")
+        # 💡 최종 딕셔너리 정제 및 줄바꿈 기호(\n) 완벽 복원
+        clean_dict = {}
+        for k, v in key_dict.items():
+            if isinstance(v, str):
+                clean_dict[str(k)] = v.replace("\\n", "\n")
+            else:
+                clean_dict[str(k)] = v
+                
+        # 💡 필수 데이터 확인
+        if not clean_dict or "project_id" not in clean_dict or "private_key" not in clean_dict:
+            st.error("❌ [원인 분석 2] Streamlit Secrets 설정창에서 키를 읽어오지 못했습니다.")
+            st.info(f"💡 디버그 기록: {debug_log} | 현재 인식된 키: {list(clean_dict.keys())}")
             return None
-            
-        # 순수 파이썬 딕셔너리로 정제 (에러 방지)
-        clean_dict = {k: str(v) for k, v in key_dict.items() if v}
             
         # 💡 최종 인증 및 DB 연결!
         creds = service_account.Credentials.from_service_account_info(clean_dict)
@@ -518,7 +529,7 @@ with tab3:
                         
                         res.append({
                             "종목명": n, 
-                            "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
+                            "매 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
                             "통과 개수": f"{sc}/4", 
                             "월봉 장기추세": "🟢 안전",
                             "주가 > 200일선": "✅" if ind["Cloud_Rules"]["주가 > 200일선"] else "❌",
