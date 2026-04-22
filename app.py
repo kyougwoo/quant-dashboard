@@ -47,7 +47,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 및 SaaS 회원 관리
+# 2. Firebase DB 연결 (방탄 파서 모드 탑재)
 # ==========================================
 @st.cache_resource
 def get_db():
@@ -58,36 +58,43 @@ def get_db():
     try:
         key_dict = None
         if "FIREBASE_JSON" in st.secrets:
-            key_dict = json.loads(st.secrets["FIREBASE_JSON"])
+            raw_json = st.secrets["FIREBASE_JSON"]
+            if isinstance(raw_json, str):
+                # 💡 방탄 1: 복사/붙여넣기 시 딸려오는 이상한 특수 공백(\xa0) 제거
+                raw_json = raw_json.replace('\xa0', ' ')
+                try:
+                    # 💡 방탄 2: 찐 줄바꿈 기호가 섞여 있어도 강제로 파싱(strict=False)
+                    key_dict = json.loads(raw_json, strict=False)
+                except:
+                    # 💡 방탄 3: 최후의 수단! json 포맷이 완전히 망가졌어도 정규식으로 필요한 키값만 강제 추출
+                    key_dict = {}
+                    for k in ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "token_uri"]:
+                        m = re.search(f'"{k}"\\s*:\\s*"([^"]+)"', raw_json)
+                        if m: key_dict[k] = m.group(1)
+                    if "token_uri" not in key_dict:
+                        key_dict["token_uri"] = "https://oauth2.googleapis.com/token"
+            else:
+                key_dict = dict(raw_json)
+                
         elif "firebase" in st.secrets:
             key_dict = dict(st.secrets["firebase"])
             
-        if not key_dict:
-            st.error("❌ [원인 분석 2] 설정 누락: Streamlit Secrets 설정창에 `FIREBASE_JSON` 값이 비어있거나 올바르지 않습니다.")
+        if not key_dict or "private_key" not in key_dict:
+            st.error("❌ [원인 분석 2] 설정 오류: Streamlit Secrets 설정창에 입력한 키 값이 잘못되었습니다.")
             return None
             
-        # 💡 [핵심 해결] 복사/붙여넣기 시 발생하는 보이지 않는 공백 및 줄바꿈(\n) 오류 완벽 제거
-        clean_dict = {}
-        for k, v in key_dict.items():
-            clean_key = str(k).strip()
-            clean_dict[clean_key] = str(v).strip() if isinstance(v, str) else v
+        # 💡 방탄 4: 추출된 private_key 안에 꼬여있는 줄바꿈 문자를 실제 줄바꿈으로 완벽히 복원
+        if isinstance(key_dict.get("private_key"), str):
+            key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
             
-        if "private_key" in clean_dict:
-            clean_dict["private_key"] = clean_dict["private_key"].replace("\\n", "\n")
-            
-        creds = service_account.Credentials.from_service_account_info(clean_dict)
-        
-        # 💡 [핵심 해결] project_id를 명시적으로 주입하여 'NoneType iterable' 에러 원천 차단
-        project_id = clean_dict.get("project_id")
+        creds = service_account.Credentials.from_service_account_info(key_dict)
+        project_id = key_dict.get("project_id")
         return firestore.Client(credentials=creds, project=project_id)
         
-    except json.JSONDecodeError:
-        st.error("❌ [원인 분석 3] 문법 오류: Secrets에 입력한 JSON 내용에 오타가 있습니다. 쉼표(,)나 따옴표(\")를 확인하세요.")
-        return None
     except Exception as e:
-        st.error(f"❌ [원인 분석 4] 알 수 없는 오류: {e}")
+        st.error(f"❌ [원인 분석 3] 시스템 인증 오류: {e}")
         import traceback
-        st.code(traceback.format_exc()) # 만약 또 에러가 나면 정확한 위치를 화면에 띄워줍니다.
+        st.code(traceback.format_exc())
         return None
 
 db = get_db()
@@ -112,7 +119,6 @@ if not st.session_state.logged_in:
                     if user_data.get('password') == login_pw:
                         st.session_state.logged_in = True
                         st.session_state.user_id = login_id
-                        # 💡 튼튼한 예외처리: DB에 'tier' 값이 없어도 에러 없이 'Free'로 넘어가도록 수정!
                         st.session_state.user_tier = user_data.get('tier', 'Free')
                         st.sidebar.success("로그인 성공!"); st.rerun()
                     else:
@@ -499,6 +505,7 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
+                        
                         res.append({
                             "종목명": n, 
                             "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
