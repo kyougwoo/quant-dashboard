@@ -351,7 +351,8 @@ def format_price(price, ticker):
 # ==========================================
 # 4. 메인 대시보드 UI
 # ==========================================
-st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+# 💡 서버가 최신 코드를 읽어왔는지 확인하기 위한 (V2) 표시 추가!
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO <span style='font-size:0.6em; color:#38bdf8;'>(V2)</span><span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 st.markdown("---")
 
