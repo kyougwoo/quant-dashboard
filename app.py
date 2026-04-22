@@ -49,11 +49,19 @@ st.markdown("""
 # ==========================================
 @st.cache_resource
 def get_db():
-    if FIREBASE_AVAILABLE and "firebase" in st.secrets:
+    if FIREBASE_AVAILABLE:
         try:
-            key_dict = dict(st.secrets["firebase"])
-            creds = service_account.Credentials.from_service_account_info(key_dict)
-            return firestore.Client(credentials=creds)
+            key_dict = None
+            # 💡 방식 1: JSON 문자열 전체를 한 번에 파싱 (가장 안전한 방식 - 따옴표 3개 사용)
+            if "FIREBASE_JSON" in st.secrets:
+                key_dict = json.loads(st.secrets["FIREBASE_JSON"])
+            # 💡 방식 2: 기존 TOML 섹션 방식 (호환성 유지)
+            elif "firebase" in st.secrets:
+                key_dict = dict(st.secrets["firebase"])
+                
+            if key_dict:
+                creds = service_account.Credentials.from_service_account_info(key_dict)
+                return firestore.Client(credentials=creds)
         except Exception as e:
             st.warning(f"⚠️ Firebase 연결 오류: {e}")
             return None
@@ -192,7 +200,8 @@ def get_top_200_stocks():
 def get_us_top_stocks():
     try:
         df = fdr.StockListing('S&P500')
-        return dict(zip(df.head(100)['Name'], df.head(100)['Symbol']))
+        top_100 = df.head(100)
+        return dict(zip(top_100['Name'], top_100['Symbol']))
     except:
         return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA", "Microsoft":"MSFT", "Alphabet":"GOOGL", "Amazon":"AMZN", "Meta":"META"}
 
@@ -466,6 +475,7 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
+                        
                         res.append({
                             "종목명": n, 
                             "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
@@ -486,6 +496,7 @@ with tab3:
         
         if res:
             df_res = pd.DataFrame(res).sort_values(by="통과 개수", ascending=False)
+            
             st.dataframe(
                 df_res, 
                 use_container_width=True, 
