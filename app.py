@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. Firebase DB 연결 (초강력 방탄 파서 모드)
+# 2. Firebase DB 연결 (초강력 문자열 스캐너 탑재)
 # ==========================================
 @st.cache_resource
 def get_db():
@@ -57,56 +57,49 @@ def get_db():
         return None
         
     try:
-        key_dict = None
+        key_dict = {}
         
-        # 💡 [방식 1] TOML 테이블 형식 (기존 방식)
-        if "firebase" in st.secrets:
-            try:
-                key_dict = dict(st.secrets["firebase"])
-            except:
-                pass
-                
-        # 💡 [방식 2] FIREBASE_JSON 문자열 방식 (대표님 방식)
-        if not key_dict and "FIREBASE_JSON" in st.secrets:
-            raw_json = st.secrets["FIREBASE_JSON"]
-            if isinstance(raw_json, str):
-                # 1. 복사/붙여넣기 시 딸려오는 이상한 특수 공백(\xa0) 싹 제거
-                raw_json = raw_json.replace('\xa0', ' ')
-                
+        # 💡 [핵심 해결] Streamlit 파싱 버그를 무시하고 텍스트에서 직접 데이터 추출
+        if "FIREBASE_JSON" in st.secrets:
+            raw_str = str(st.secrets["FIREBASE_JSON"])
+            raw_str = raw_str.replace('\xa0', ' ') # 특수 공백 제거
+            
+            # 구글 인증에 필요한 11가지 핵심 키값 스캔
+            keys = [
+                "type", "project_id", "private_key_id", "private_key", 
+                "client_email", "client_id", "auth_uri", "token_uri", 
+                "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"
+            ]
+            
+            for k in keys:
+                # 문법이 깨졌어도 "키" : "값" 형태만 맞으면 강제로 뽑아옵니다.
+                match = re.search(f'"{k}"\\s*:\\s*"([^"]+)"', raw_str)
+                if match:
+                    val = match.group(1)
+                    val = val.replace('\\n', '\n') # 꼬인 줄바꿈 정상화
+                    key_dict[k] = val
+
+        # 만약 FIREBASE_JSON 방식이 실패했다면 기존 TOML [firebase] 블록 방식 시도
+        if not key_dict or "project_id" not in key_dict:
+            if "firebase" in st.secrets:
                 try:
-                    # 2. Streamlit이 강제로 깨버린 줄바꿈을 JSON 문법에 맞게 복원 후 파싱
-                    fixed_json = raw_json.replace('\n', '\\n')
-                    key_dict = json.loads(fixed_json)
+                    key_dict = {k: v for k, v in st.secrets["firebase"].items()}
+                    if "private_key" in key_dict and isinstance(key_dict["private_key"], str):
+                        key_dict["private_key"] = key_dict["private_key"].replace('\\n', '\n')
                 except:
-                    # 3. JSON 문법이 아예 산산조각 났더라도, 핵심 데이터 3개만 강제로 멱살 잡고 뜯어옵니다!
-                    project_match = re.search(r'"project_id"\s*:\s*"([^"]+)"', raw_json)
-                    email_match = re.search(r'"client_email"\s*:\s*"([^"]+)"', raw_json)
-                    pk_match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_json, re.DOTALL)
-                    
-                    if project_match and email_match and pk_match:
-                        pk_inner = pk_match.group(1).replace('\\n', '\n')
-                        key_dict = {
-                            "type": "service_account",
-                            "project_id": project_match.group(1),
-                            "private_key": f"-----BEGIN PRIVATE KEY-----{pk_inner}-----END PRIVATE KEY-----\n",
-                            "client_email": email_match.group(1),
-                            "token_uri": "https://oauth2.googleapis.com/token"
-                        }
-            else:
-                key_dict = dict(raw_json)
+                    pass
 
         # 💡 필수 데이터 최종 확인
         if not key_dict or "project_id" not in key_dict or "private_key" not in key_dict:
             st.error("❌ [원인 분석 2] Streamlit Secrets 설정창에서 키를 찾을 수 없거나 형식이 완전히 잘못되었습니다.")
             return None
             
-        # 💡 Private Key 줄바꿈 복원
-        if isinstance(key_dict.get("private_key"), str):
-            key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
+        # 순수 파이썬 딕셔너리로 정제 (에러 방지)
+        clean_dict = {k: str(v) for k, v in key_dict.items() if v}
             
         # 💡 최종 인증 및 DB 연결!
-        creds = service_account.Credentials.from_service_account_info(key_dict)
-        return firestore.Client(credentials=creds, project=key_dict["project_id"])
+        creds = service_account.Credentials.from_service_account_info(clean_dict)
+        return firestore.Client(credentials=creds, project=clean_dict["project_id"])
         
     except Exception as e:
         st.error(f"❌ [원인 분석 3] DB 인증 거부: {e}")
