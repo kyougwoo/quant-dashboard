@@ -82,17 +82,23 @@ else:
     tele_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather에서 발급받은 토큰")
     tele_chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="내 텔레그램 고유 숫자 ID")
 
+# 💡 텔레그램 전송 함수 강화 (에러 파악 및 안전한 HTML 방식 적용)
 def send_telegram_message(token, chat_id, text):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown"
+        "parse_mode": "HTML" # 특수기호 충돌을 막기 위해 HTML 방식 사용
     }
     try:
-        requests.post(url, json=payload, timeout=5)
-    except:
-        pass
+        response = requests.post(url, json=payload, timeout=5)
+        if response.status_code != 200:
+            st.error(f"❌ 텔레그램 전송 실패 ({response.status_code}): {response.text}")
+            return False
+        return True
+    except Exception as e:
+        st.error(f"❌ 텔레그램 네트워크 오류: {e}")
+        return False
 
 def get_portfolio_file(): return f'portfolio_data_{st.session_state.user_id}.csv'
 
@@ -426,9 +432,6 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
-                        
-                        # 💡 1. 여기서 상세한 ✅/❌ 항목들을 다시 추가하고, 
-                        # 💡 2. 가격은 문자가 아닌 순수 숫자(p)로 저장하여 엑셀 다운로드 시 완벽하게 계산되도록 합니다.
                         res.append({
                             "종목명": n, 
                             "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
@@ -450,7 +453,6 @@ with tab3:
         if res:
             df_res = pd.DataFrame(res).sort_values(by="통과 개수", ascending=False)
             
-            # 💡 웹 화면에서는 순수 숫자를 예쁘게(콤마, 소수점) 포맷팅해서 보여줍니다.
             st.dataframe(
                 df_res, 
                 use_container_width=True, 
@@ -462,21 +464,22 @@ with tab3:
                 }
             )
             
-            # 💡 엑셀로 다운받을 때는 위에서 저장한 순수 숫자 데이터가 그대로 들어가서 계산이 편해집니다.
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name=f"cloud_quant_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             
+            # 💡 텔레그램 메시지를 HTML 포맷에 맞게 재작성
             if send_to_telegram and tele_token and tele_chat_id:
-                msg_text = f"🚀 *클라우드 퀀트 스캔 완료*\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
+                msg_text = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개의 타점 종목이 발견되었습니다.\n\n"
                 for r in res[:10]:
-                    msg_text += f"*{r['종목명']}* ({r['매수 시그널']})\n"
+                    msg_text += f"<b>{r['종목명']}</b> ({r['매수 시그널']})\n"
                     msg_text += f"- 통과: {r['통과 개수']} | 통화: {r['통화']}\n"
                     msg_text += f"- 현재가: {r['현재가']:,.2f} | 목표: {r['목표가']:,.2f}\n\n"
                 
                 if len(res) > 10:
                     msg_text += f"...외 {len(res) - 10}개 종목 발견"
                     
-                send_telegram_message(tele_token, tele_chat_id, msg_text)
-                st.success("📱 텔레그램으로 요약 알림이 전송되었습니다!")
+                is_success = send_telegram_message(tele_token, tele_chat_id, msg_text)
+                if is_success:
+                    st.success("📱 텔레그램으로 요약 알림이 전송되었습니다!")
             elif send_to_telegram:
                 st.warning("⚠️ 왼쪽 메뉴의 '텔레그램 알림 설정'에서 Token과 Chat ID를 모두 입력해야 전송됩니다.")
         else: st.warning("월봉 10선 위 안전한 종목이 없습니다.")
