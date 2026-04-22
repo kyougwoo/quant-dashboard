@@ -200,6 +200,198 @@ def get_ai_analysis(prompt, api_key):
     for attempt in range(5):
         try:
             res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-            text = res.text.strip()
-            # 💡 안전한 JSON 파싱 로직 (잘림 방지)
-            if text.startswith("
+            # 💡 잘림 방지용 가장 짧고 안전한 텍스트 파싱 로직 적용
+            text = res.text.replace("```json", "").replace("```", "").strip()
+            return json.loads(text)
+        except Exception as e:
+            err = str(e).lower()
+            if "429" in err or "quota" in err:
+                if attempt < 4:
+                    match = re.search(r'retry in (\d+\.?\d*)s', err)
+                    time.sleep((float(match.group(1)) + 1.0) if match else 15.0)
+                    continue
+            elif "json" in err or "expecting value" in err:
+                if attempt < 4:
+                    time.sleep(2)
+                    continue
+            raise e
+
+def get_current_price(ticker):
+    try:
+        df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+        return int(df['Close'].iloc[-1]) if not df.empty else 0
+    except: return 0
+
+# ==========================================
+# 4. 메인 대시보드 UI (SaaS 디자인)
+# ==========================================
+st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
+st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
+st.markdown("---")
+
+col_s1, col_s2 = st.columns([1, 1])
+with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "알테오젠", "루닛"])
+with col_s2:
+    if fast_search == "직접 입력": stock_name = st.text_input("종목명 (또는 6자리 코드)", "삼성전자")
+    else: stock_name = fast_search; st.text_input("선택된 종목", value=stock_name, disabled=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["📊 차트 분석", "💼 내 포트폴리오", "🔍 VIP 검색기"])
+
+# [탭 1] 차트 분석
+with tab1:
+    if not gemini_api_key: st.warning("👈 왼쪽 메뉴에 API Key를 입력하세요."); st.stop()
+    actual_name, ticker = get_stock_info(stock_name)
+    if not ticker: st.error("종목 코드를 찾을 수 없습니다."); st.stop()
+
+    st.subheader(f"📊 {actual_name} 실시간 차트")
+    with st.spinner("빅데이터 연산 중..."):
+        try: 
+            raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+            df, tech_ind = calculate_cloud_indicators(raw_df)
+        except: df = None; tech_ind = {}
+        
+    if df is not None and not df.empty:
+        display_df = df.tail(90)
+        fig = go.Figure(data=[go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가")])
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='magenta', width=1.5), name='5 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='yellow', width=1.5), name='15 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 매물대'))
+        fig.update_layout(title="최근 3개월 지표", xaxis_rangeslider_visible=False, height=350, margin=dict(l=5, r=5, t=40, b=5), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode=False)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    st.markdown("---")
+    info_col1, info_col2 = st.columns(2)
+    with info_col1:
+        st.markdown("**☁️ 클라우드 4원칙**")
+        if tech_ind:
+            for rule, passed in tech_ind["Cloud_Rules"].items(): st.write(f"{'✅' if passed else '❌'} {rule}")
+            stop_loss = int(df['Close'].iloc[-1]) - (int(tech_ind.get('ATR', 0)) * 2)
+            st.info(f"🛡️ **터틀 손절가:** {stop_loss:,}원")
+            st.markdown("**📅 월봉 10선 추세**")
+            if tech_ind.get('Is_Above_Monthly_EMA10'): st.success("🟢 안전 (10선 돌파)")
+            else: st.error("🔴 위험 (10선 이탈)")
+        else: st.error("계산 불가")
+    with info_col2:
+        st.markdown("**📰 AI 뉴스 스크랩**")
+        for news in get_recent_news(actual_name)[:4]: st.caption(f"• {news}")
+
+    st.markdown("---")
+    if st.button("📊 3년 백테스팅 실행", use_container_width=True):
+        with st.spinner("시뮬레이션 중..."):
+            try:
+                bt_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=365*3)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+                stats = run_backtest(calculate_cloud_indicators(bt_df)[0])
+                c1, c2, c3 = st.columns(3)
+                c1.metric("매매 횟수", f"{stats['total_trades']}회"); c2.metric("승률", f"{stats['win_rate']:.1f}%"); c3.metric("누적 수익률", f"{stats['total_return']:.1f}%")
+            except: st.error("데이터 부족")
+
+    if df is not None and not df.empty:
+        if st.button("🚀 클라우드 AI 정밀 분석", type="primary", use_container_width=True):
+            with st.spinner("AI 분석 중... (API 제한 시 최대 30초 대기)"):
+                prompt = f"""
+                종목: {actual_name}, 단기 클라우드 통과: {sum(1 for v in tech_ind["Cloud_Rules"].values() if v)}/4
+                월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험(저승사자)'}
+                손절가: {stop_loss}원, 뉴스: {get_recent_news(actual_name)}
+                위험 상태면 무조건 관망/매도 지시해. JSON 응답: {{"technicalAgent": {{"score": 8, "reasoning": "..."}}, "fundamentalAgent": {{"score": 6, "reasoning": "..."}}, "riskManager": {{"action": "매수", "positionSize": "20%", "reasoning": "..."}}}}
+                """
+                try:
+                    res = get_ai_analysis(prompt, gemini_api_key)
+                    st.success("✅ 분석 완료!")
+                    c1, c2, c3 = st.columns(3)
+                    with c1: st.metric("차트 점수", f"{res['technicalAgent']['score']}점"); st.caption(res['technicalAgent']['reasoning'])
+                    with c2: st.metric("뉴스 점수", f"{res['fundamentalAgent']['score']}점"); st.caption(res['fundamentalAgent']['reasoning'])
+                    with c3: st.metric(f"포지션: {res['riskManager']['action']}", f"비중: {res['riskManager']['positionSize']}"); st.caption(res['riskManager']['reasoning'])
+                except Exception as e: st.error(f"오류: {e}")
+
+# [탭 2] 포트폴리오
+with tab2:
+    st.subheader(f"💼 {st.session_state.user_id}님의 포트폴리오")
+    with st.form("add_stock_form"):
+        c1, c2 = st.columns(2); c3, c4 = st.columns(2)
+        with c1: p_name = st.text_input("종목명", "현대차")
+        with c2: p_price = st.number_input("매수 단가", min_value=0, step=1000)
+        with c3: p_qty = st.number_input("수량", min_value=1, step=1)
+        with c4: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); submitted = st.form_submit_button("➕ 추가", use_container_width=True)
+        if submitted:
+            an, _ = get_stock_info(p_name)
+            st.session_state.portfolio = pd.concat([st.session_state.portfolio, pd.DataFrame({'종목명': [an if an else p_name], '매수단가': [p_price], '수량': [p_qty]})], ignore_index=True)
+            save_portfolio(st.session_state.portfolio); st.rerun()
+
+    if not st.session_state.portfolio.empty:
+        dis_df = st.session_state.portfolio.copy()
+        prices=[]; profs=[]; rates=[]
+        for _, r in dis_df.iterrows():
+            _, tck = get_stock_info(r['종목명'])
+            p = get_current_price(tck) if tck else 0
+            prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
+            prices.append(p); profs.append(prof); rates.append(rate)
+        dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
+        
+        edt_df = st.data_editor(dis_df, column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
+        if not edt_df.equals(dis_df.drop(columns=['현재가','수익금','수익률(%)'])):
+            st.session_state.portfolio[['매수단가','수량']] = edt_df[['매수단가','수량']]; save_portfolio(st.session_state.portfolio); st.rerun()
+
+        if st.button("✨ 포트폴리오 AI 진단", type="primary", use_container_width=True):
+            with st.spinner("진단 중..."):
+                txt = ""
+                for _, r in dis_df.iterrows():
+                    _, tck = get_stock_info(r['종목명']); stat = "불가"
+                    if tck:
+                        try:
+                            df, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                            if ind: stat = f"월봉10선({'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}), 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
+                        except: pass
+                    txt += f"- {r['종목명']}: 수익 {r['수익률(%)']:.2f}%, 상태: {stat}\n"
+                
+                try:
+                    res = get_ai_analysis(f"월봉10선 위험이면 전량매도 권고해. [포트폴리오]\n{txt}\n응답: {{\"results\": [{{\"stock\": \"명\", \"action\": \"매도\", \"reason\": \"...\"}}]}}", gemini_api_key)
+                    for i in res.get("results", []): st.info(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
+                except Exception as e: st.error(f"오류: {e}")
+        if st.button("🗑️ 선택 삭제"): st.warning("수량을 0으로 만들면 삭제됩니다.")
+    else: st.info("등록된 종목이 없습니다.")
+
+# [탭 3] VIP 검색기
+with tab3:
+    st.subheader("🔍 매수 급소 AI 스크리너")
+    mode = st.radio("모드", ["⚡ 우량주 40종목 (무료)", "💎 코스피 상위 200종목 (VIP)"])
+    if st.button("🔎 검색 실행", type="primary", use_container_width=True):
+        if "VIP" in mode and st.session_state.user_tier != 'VIP':
+            st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용</h4><p>사이드바에서 <b>로그인</b> 후 이용하세요.</p></div>", unsafe_allow_html=True); st.stop()
+            
+        sl = {
+            "삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220",
+            "현대차":"005380", "기아":"000270", "셀트리온":"068270", "POSCO홀딩스":"005490",
+            "KB금융":"105560", "NAVER":"035420", "카카오":"035720", "에코프로":"086520",
+            "에코프로비엠":"247540", "두산에너빌리티":"034020", "HD현대미포":"010620",
+            "알테오젠":"196170", "LG화학":"051910", "삼성SDI":"006400", "엔켐":"283360",
+            "HLB":"028300", "한미반도체":"042700", "크래프톤":"035760", "현대모비스":"012330",
+            "LG전자":"066570", "신한지주":"055550", "하나금융지주":"086790", "한국전력":"015760",
+            "HD한국조선해양":"009540", "HD현대중공업":"329180", "한화에어로스페이스":"012450",
+            "LIG넥스원":"079550", "현대로템":"064350", "삼양식품":"145990", "아모레퍼시픽":"090430",
+            "SK이노베이션":"096770", "포스코퓨처엠":"003670", "두산로보틱스":"277810",
+            "메리츠금융지주":"138040", "삼성물산":"028260", "제주반도체":"080220", "루닛":"328130"
+        } if "무료" in mode else get_top_200_stocks()
+        if not sl: st.error("데이터 오류"); st.stop()
+        
+        res = []; bar = st.progress(0); txt = st.empty()
+        for i, (n, c) in enumerate(sl.items()):
+            txt.text(f"스캔 중... {n} ({i+1}/{len(sl)})")
+            try:
+                df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                if ind:
+                    sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
+                    if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
+                        p = df['Close'].iloc[-1]; a = ind['ATR']
+                        res.append({"종목명": n, "시그널": "🔥매수" if sc==4 else "👍분할", "통과": f"{sc}/4", "현재가": f"{int(p):,}원", "목표가": f"{int(p+(a*4)):,}원", "손절가": f"{int(p-(a*2)):,}원"})
+                time.sleep(0.05)
+            except: pass
+            bar.progress((i+1)/len(sl))
+        txt.text("✅ 완료!")
+        
+        if res:
+            df_res = pd.DataFrame(res).sort_values(by="통과", ascending=False)
+            st.dataframe(df_res, use_container_width=True, hide_index=True)
+            st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv", use_container_width=True)
+        else: st.warning("월봉 10선 위 안전한 종목이 없습니다.")
