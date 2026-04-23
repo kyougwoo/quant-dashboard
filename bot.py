@@ -15,10 +15,12 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
 USER_ID = os.environ.get("USER_ID", "vip") # 본인의 아이디
 
-# 💡 [업그레이드] 에러 추적기가 탑재된 텔레그램 전송 함수
+# 💡 [업그레이드] 에러 추적기 및 링크 찌꺼기 완벽 차단 함수
 def send_telegram(text):
     print("▶️ 텔레그램 전송 시도 중...")
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_TOKEN}/sendMessage"
+    # 주소에 대괄호 찌꺼기가 붙지 않도록 안전하게 분할 작성
+    base_url = "https://" + "api.telegram.org/bot"
+    url = f"{base_url}{TELEGRAM_TOKEN}/sendMessage"
     try:
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"})
         if res.status_code != 200:
@@ -31,7 +33,9 @@ def send_telegram(text):
 # --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
-        url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){keyword}&hl=ko&gl=KR&ceid=KR:ko"
+        # 주소 분할 작성
+        base_url = "https://" + "[news.google.com/rss/search?q=](https://news.google.com/rss/search?q=)"
+        url = f"{base_url}{keyword}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
@@ -77,7 +81,6 @@ def get_ai_analysis(prompt):
 # --- 3. 핵심 로직: 모닝 브리핑 (아침) ---
 def run_morning_briefing():
     print("🌅 [모닝 브리핑 스케줄러 기동 시작]")
-    send_telegram("🌅 <b>[모닝 브리핑 스케줄러 기동 중...]</b>\n데이터를 수집하고 있습니다.")
     
     import re
     pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
@@ -86,7 +89,7 @@ def run_morning_briefing():
     pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
     private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
     
-    token_url = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
+    token_url = "https://" + "[oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
     creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": token_url}
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     db = firestore.Client(credentials=creds, project=pm.group(1))
@@ -98,6 +101,7 @@ def run_morning_briefing():
         
     stocks = doc.to_dict().get('stocks', [])
     portfolio_context = ""
+    portfolio_info_list = []
     
     ticker_map = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "기아":"000270", "LG에너지솔루션":"373220"}
     
@@ -116,6 +120,12 @@ def run_morning_briefing():
             prof = (price - s['매수단가']) / s['매수단가'] * 100 if s['매수단가'] > 0 else 0
             stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}"
             portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
+            
+            # 가격 정보 저장
+            a = float(ind['ATR'])
+            portfolio_info_list.append({
+                'name': name, 'price': price, 'stop': price - (a*2), 'target': price + (a*4), 'prof': prof
+            })
 
     print("🧠 AI 분석 중...")
     market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
@@ -126,7 +136,17 @@ def run_morning_briefing():
     """
     res = get_ai_analysis(prompt)
     
-    msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n🌐 <b>시장 동향</b>\n{res['market_overview']}\n\n🎯 <b>종목별 전략</b>\n"
+    # 💡 [업그레이드] 텔레그램 메시지 포맷 (현재가/목표가/손절가 명확하게 분리)
+    msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n"
+    msg += "📊 <b>내 포트폴리오 점검</b>\n"
+    for p in portfolio_info_list:
+        msg += f"🔹 <b>{p['name']}</b> (수익률: {p['prof']:.1f}%)\n"
+        msg += f" └ 💵 현재가: {int(p['price']):,}원\n"
+        msg += f" └ 🎯 목표가: {int(p['target']):,}원\n"
+        msg += f" └ 🛡️ 손절가: {int(p['stop']):,}원\n\n"
+    
+    msg += f"🌐 <b>시장 동향</b>\n{res['market_overview']}\n\n"
+    msg += "🎯 <b>종목별 전략</b>\n"
     for s in res['stock_briefings']: msg += f"- <b>{s['stock']}</b>: {s['strategy']}\n"
     msg += f"\n💡 <b>오늘의 지침:</b> {res['action_plan']}"
     
@@ -136,7 +156,6 @@ def run_morning_briefing():
 # --- 4. 핵심 로직: 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
     print("🔍 [오후 타점 스크리너 기동 시작]")
-    send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 스캔을 시작합니다.")
     sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
     
     res_list = []
@@ -161,10 +180,15 @@ def run_afternoon_screener():
         except: pass
         
     res_list.sort(key=lambda x: x['score'], reverse=True)
+    
+    # 💡 [업그레이드] 텔레그램 메시지 포맷 (가독성 향상)
     msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
         msg += f"<b>{r['name']}</b> ({r['sig']}) - 통과: {r['score']}/4\n"
-        msg += f" └ 현재가: {int(r['price']):,}원 | 목표가: {int(r['target']):,}원 | 손절가: {int(r['stop']):,}원\n\n"
+        msg += f" └ 💵 현재가: {int(r['price']):,}원\n"
+        msg += f" └ 🎯 목표가: {int(r['target']):,}원\n"
+        msg += f" └ 🛡️ 손절가: {int(r['stop']):,}원\n\n"
+        
     if not res_list: msg += "월봉 10선 위 안전한 매수 타점 종목이 없습니다."
     
     send_telegram(msg)
