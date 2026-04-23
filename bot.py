@@ -145,13 +145,24 @@ def run_afternoon_screener():
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                 if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
-                    res_list.append({"name": n, "sig": "🔥 강력" if sc==4 else "👍 분할", "score": sc})
+                    # 💡 [업그레이드] 목표가와 손절가를 함께 계산하여 메시지에 추가
+                    a = float(ind['ATR'])
+                    res_list.append({
+                        "name": n, 
+                        "sig": "🔥 강력" if sc==4 else "👍 분할", 
+                        "score": sc,
+                        "price": p,
+                        "target": p + (a * 4),
+                        "stop": p - (a * 2)
+                    })
             time.sleep(0.5)
         except: pass
         
     res_list.sort(key=lambda x: x['score'], reverse=True)
     msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
-    for r in res_list: msg += f"<b>{r['name']}</b> ({r['sig']}) - 통과: {r['score']}/4\n"
+    for r in res_list: 
+        msg += f"<b>{r['name']}</b> ({r['sig']}) - 통과: {r['score']}/4\n"
+        msg += f" └ 현재가: {int(r['price']):,}원 | 목표가: {int(r['target']):,}원 | 손절가: {int(r['stop']):,}원\n\n"
     if not res_list: msg += "월봉 10선 위 안전한 매수 타점 종목이 없습니다."
     
     send_telegram(msg)
@@ -168,3 +179,61 @@ if __name__ == "__main__":
         run_afternoon_screener()
     else:
         print("Usage: python bot.py [morning|afternoon]")
+
+
+⏰ Step 2. GitHub Actions 알람시계 설정 (scheduler.yml)
+
+이제 깃허브에게 "아침 8시 30분에 python bot.py morning을 실행하고, 오후 4시 정각에 python bot.py afternoon을 실행해!" 라고 지시서를 넘겨줘야 합니다.
+
+GitHub 저장소에서 [Add file] -> [Create new file] 을 클릭합니다.
+
+파일 이름을 적을 때 슬래시(/)를 이용하여 폴더를 만듭니다. 반드시 아래와 똑같이 적으세요.
+👉 .github/workflows/scheduler.yml
+
+아래의 코드를 복사해서 붙여넣고 [Commit changes] 를 누릅니다.
+
+name: Quant Bot Scheduler
+
+on:
+  schedule:
+    # 1. 모닝 브리핑: 매주 월~금, 한국 시간 아침 8시 30분 (UTC 기준 전날 23:30)
+    - cron: '30 23 * * 0-4'
+    # 2. 오후 스크리너: 매주 월~금, 한국 시간 오후 4시 00분 (UTC 기준 07:00)
+    - cron: '0 7 * * 1-5'
+  workflow_dispatch: # 수동으로 강제 실행할 수 있는 버튼 활성화
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 파일 불러오기
+        uses: actions/checkout@v4
+        
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: 필수 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas finance-datareader beautifulsoup4 requests google-generativeai google-cloud-firestore
+          
+      - name: 봇 실행 (모닝 브리핑 / 오후 스크리너 자동 분기)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FIREBASE_JSON: ${{ secrets.FIREBASE_JSON }}
+          USER_ID: ${{ secrets.USER_ID }}
+        run: |
+          # 현재 시간이 UTC 23시(한국 아침 8시)인지, UTC 07시(한국 오후 4시)인지 확인
+          CURRENT_HOUR=$(date -u +"%H")
+          if [ "$CURRENT_HOUR" == "23" ]; then
+            python bot.py morning
+          elif [ "$CURRENT_HOUR" == "07" ]; then
+            python bot.py afternoon
+          else
+            # 수동 실행 시 기본적으로 스크리너 작동
+            python bot.py afternoon 
+          fi
