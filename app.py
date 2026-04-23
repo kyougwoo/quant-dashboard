@@ -106,7 +106,6 @@ if 'user_tier' not in st.session_state: st.session_state.user_tier = 'Free'
 st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(일봉 클라우드 + 월봉 10선 + 터틀 손익비)** 기반 자동화 시스템")
 
-# 로그인이 안 되어 있으면 자동으로 패널이 열려 있고, 로그인하면 접힙니다.
 with st.expander("👤 내 계정 및 시스템 설정 (모바일은 여기를 눌러주세요!)", expanded=not st.session_state.logged_in):
     acc_col, set_col = st.columns([1, 1])
     
@@ -207,48 +206,33 @@ def get_stock_info(query):
     if not query: return None, None
     query_no_space = query.replace(" ", "").upper()
 
-    # 1. 영문 티커(미국주식) 우선 처리 (예: AAPL, TSLA)
-    if re.match(r'^[A-Z0-9\.]+$', query_no_space):
-        return query_no_space, query_no_space
-
-    # 💡 [업그레이드] 한국 주식 완전일치 및 '부분 일치' 찰떡 검색기능
+    if re.match(r'^[A-Z0-9\.]+$', query_no_space): return query_no_space, query_no_space
     try:
         df_krx = fdr.StockListing('KRX')
-        
-        # 1. 숫자 6자리 코드로 검색
         if query_no_space.isdigit() and len(query_no_space) == 6:
             match = df_krx[df_krx['Code'] == query_no_space]
             if not match.empty: return match['Name'].values[0], query_no_space
             
-        # 2. 이름으로 완전 일치 (띄어쓰기 무시)
         df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
         match = df_krx[df_krx['Name_NoSpace'] == query_no_space]
         if not match.empty: return match['Name'].values[0], match['Code'].values[0]
 
-        # 3. 이름으로 부분 일치 (예: '삼성' 치면 '삼성전자'가 먼저 나오도록 글자수 짧은 순 정렬)
         match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_no_space, na=False)]
         if not match_partial.empty:
             best_match = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
             return best_match['Name'], best_match['Code']
     except: pass
 
-    # 4. 하드코딩 백업
-    top_stocks = {
-        "삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", 
-        "NAVER":"035420", "알테오젠":"196170", "루닛":"328130", "에코프로":"086520",
-        "에코프로비엠":"247540", "셀트리온":"068270", "LG에너지솔루션":"373220"
-    }
+    top_stocks = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "카카오":"035720", "NAVER":"035420", "알테오젠":"196170", "루닛":"328130", "에코프로":"086520", "에코프로비엠":"247540", "셀트리온":"068270", "LG에너지솔루션":"373220"}
     for name, code in top_stocks.items():
         if query_no_space in name.replace(" ", ""): return name, code
 
-    # 5. 네이버 자동완성 최후의 폴백
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=5).json().get('items', [])
         if res and len(res[0]) > 0: return res[0][0][0], res[0][0][1]
     except: pass
-        
     return None, None
 
 @st.cache_data(ttl=86400)
@@ -427,7 +411,6 @@ with tab1:
         else: st.error("계산 불가")
     with info_col2:
         st.markdown("**📰 AI 뉴스 스크랩**")
-        # 💡 [UI 수정] caption(흐릿한 글씨)을 write로 변경하여 진하고 선명하게 출력
         for news in get_recent_news(actual_name)[:4]: st.write(f"• {news}")
 
     st.markdown("---")
@@ -511,9 +494,41 @@ with tab2:
             p = get_current_price(tck) if tck else 0.0
             prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             prices.append(p); profs.append(prof); rates.append(rate)
+            
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         
-        edt_df = st.data_editor(dis_df, column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
+        # 💡 [모바일 최적화] 데이터 연산
+        dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
+        total_invest = (dis_df['매수단가'] * dis_df['수량']).sum()
+        total_value = dis_df['평가금액'].sum()
+        total_profit = dis_df['수익금'].sum()
+        total_yield = (total_profit / total_invest * 100) if total_invest > 0 else 0
+
+        # 시각화 대시보드 렌더링 (모바일 화면 자동 쌓임)
+        st.markdown("### 📊 내 자산 요약")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("총 매수금액", f"{int(total_invest):,}원" if total_invest > 1000 else f"${total_invest:,.2f}")
+        m2.metric("총 평가금액", f"{int(total_value):,}원" if total_value > 1000 else f"${total_value:,.2f}", f"{total_profit:,.0f}원" if total_profit > 1000 else f"${total_profit:,.2f}")
+        m3.metric("총 누적 수익률", f"{total_yield:.2f}%")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        viz_col1, viz_col2 = st.columns(2)
+        with viz_col1:
+            # 1. 도넛 차트 (모바일 최적화: 여백 최소화, 터치 방해 도구모음 제거)
+            fig_pie = go.Figure(data=[go.Pie(labels=dis_df['종목명'], values=dis_df['평가금액'], hole=.4, textinfo='percent', textposition='inside')])
+            fig_pie.update_layout(title_text="자산 비중", height=250, margin=dict(l=10, r=10, t=40, b=10), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+            st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
+            
+        with viz_col2:
+            # 2. 바 차트 (모바일 최적화: 좁은 화면 배려, 여백 최소화)
+            bar_colors = ['#ef4444' if r > 0 else '#3b82f6' for r in dis_df['수익률(%)']]
+            fig_bar = go.Figure(data=[go.Bar(x=dis_df['종목명'], y=dis_df['수익률(%)'], marker_color=bar_colors, text=dis_df['수익률(%)'].apply(lambda x: f"{x:.1f}%"), textposition='outside')])
+            fig_bar.update_layout(title_text="종목별 수익률", height=250, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False)) # 공간 절약 위해 x축 텍스트 숨김
+            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
+
+        # 기존 표 렌더링
+        edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
         
         orig_vals = st.session_state.portfolio[['매수단가', '수량']].fillna(0).values.tolist()
         new_vals = edt_df[['매수단가', '수량']].fillna(0).values.tolist()
@@ -533,7 +548,7 @@ with tab2:
                         if tck:
                             try:
                                 df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
-                                if ind: stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, 200일선={'돌파' if ind['Cloud_Rules']['주가 > 200일선'] else '이탈'}"
+                                if ind: stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
                             except: pass
                         txt += f"- [{r['종목명']}] 수익률: {r['수익률(%)']:.2f}%, 상태: {stat}\n"
                     
