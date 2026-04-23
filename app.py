@@ -177,7 +177,9 @@ st.markdown("---")
 
 def send_telegram_message(token, chat_id, text):
     try:
-        res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+        # 안전한 주소 조합 (에러 방지)
+        base_url = "https://" + "api.telegram.org/bot"
+        res = requests.post(f"{base_url}{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
         if res.status_code != 200: return False
         return True
     except Exception as e: return False
@@ -289,7 +291,8 @@ def get_us_top_stocks():
 @st.cache_data(ttl=3600)
 def get_recent_news(keyword):
     try:
-        res = requests.get(f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
+        base_url = "https://" + "news.google.com/rss/search?q="
+        res = requests.get(f"{base_url}{keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:5] if item.title]
     except: return ["뉴스 수집 오류"]
@@ -722,7 +725,15 @@ with tab3:
                     sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                     if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                         p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
-                        res.append({"종목명": n, "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", "통과 개수": f"{sc}/4", "통화": "KRW" if str(c).isdigit() else "USD", "현재가": p, "목표가": p+(a*4), "손절가": p-(a*2)})
+                        res.append({
+                            "종목명": n, 
+                            "매수 시그널": "🔥 강력 매수" if sc==4 else "👍 분할 매수", 
+                            "통과 개수": f"{sc}/4", 
+                            "통화": "KRW" if str(c).isdigit() else "USD", 
+                            "현재가": p, 
+                            "목표가": p+(a*4), 
+                            "손절가": p-(a*2)
+                        })
                 time.sleep(0.05)
             except: pass
             bar.progress((i+1)/len(sl))
@@ -733,12 +744,35 @@ with tab3:
             st.dataframe(df_res, use_container_width=True, hide_index=True, column_config={"현재가": st.column_config.NumberColumn(format="%,.2f"), "목표가": st.column_config.NumberColumn(format="%,.2f"), "손절가": st.column_config.NumberColumn(format="%,.2f")})
             st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv")
             
+            # 💡 [업그레이드] 웹에서 버튼 눌렀을 때 텔레그램으로 목표가/손절가도 같이 보내는 로직!
             if send_to_telegram and tele_token and tele_chat_id:
-                sorted_res = df_res.to_dict('records'); chunks = []; current_msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(sorted_res)}개 종목 발견\n\n"
+                sorted_res = df_res.to_dict('records')
+                chunks = []
+                current_msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(sorted_res)}개 종목 발견\n\n"
+                
                 for r in sorted_res:
-                    stock_info = f"<b>{r['종목명']}</b> ({r['매수 시그널']})\n- 통과: {r['통과 개수']} | 현재가: {r['현재가']:,.2f}\n\n"
-                    if len(current_msg) + len(stock_info) > 3800: chunks.append(current_msg); current_msg = stock_info
-                    else: current_msg += stock_info
+                    # 한국/미국 주식에 따라 원/달러 기호 및 소수점 포맷 변경
+                    if r.get('통화') == "KRW":
+                        curr_p = f"{int(r['현재가']):,}원"
+                        tar_p = f"{int(r['목표가']):,}원"
+                        stop_p = f"{int(r['손절가']):,}원"
+                    else:
+                        curr_p = f"${r['현재가']:,.2f}"
+                        tar_p = f"${r['목표가']:,.2f}"
+                        stop_p = f"${r['손절가']:,.2f}"
+
+                    stock_info = f"<b>{r['종목명']}</b> ({r['매수 시그널']})\n"
+                    stock_info += f"- 통과: {r['통과 개수']}\n"
+                    stock_info += f" └ 💵 현재가: {curr_p}\n"
+                    stock_info += f" └ 🎯 목표가: {tar_p}\n"
+                    stock_info += f" └ 🛡️ 손절가: {stop_p}\n\n"
+                    
+                    if len(current_msg) + len(stock_info) > 3800: 
+                        chunks.append(current_msg)
+                        current_msg = stock_info
+                    else: 
+                        current_msg += stock_info
+                        
                 if current_msg: chunks.append(current_msg)
                 
                 is_success = True
