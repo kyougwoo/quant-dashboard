@@ -31,7 +31,8 @@ def send_telegram(text):
 # --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
-        res = requests.get(f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
+        url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){keyword}&hl=ko&gl=KR&ceid=KR:ko"
+        res = requests.get(url, timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
     except: return []
@@ -85,7 +86,8 @@ def run_morning_briefing():
     pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
     private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
     
-    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"}
+    token_url = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
+    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": token_url}
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     db = firestore.Client(credentials=creds, project=pm.group(1))
     
@@ -179,61 +181,3 @@ if __name__ == "__main__":
         run_afternoon_screener()
     else:
         print("Usage: python bot.py [morning|afternoon]")
-
-
-⏰ Step 2. GitHub Actions 알람시계 설정 (scheduler.yml)
-
-이제 깃허브에게 "아침 8시 30분에 python bot.py morning을 실행하고, 오후 4시 정각에 python bot.py afternoon을 실행해!" 라고 지시서를 넘겨줘야 합니다.
-
-GitHub 저장소에서 [Add file] -> [Create new file] 을 클릭합니다.
-
-파일 이름을 적을 때 슬래시(/)를 이용하여 폴더를 만듭니다. 반드시 아래와 똑같이 적으세요.
-👉 .github/workflows/scheduler.yml
-
-아래의 코드를 복사해서 붙여넣고 [Commit changes] 를 누릅니다.
-
-name: Quant Bot Scheduler
-
-on:
-  schedule:
-    # 1. 모닝 브리핑: 매주 월~금, 한국 시간 아침 8시 30분 (UTC 기준 전날 23:30)
-    - cron: '30 23 * * 0-4'
-    # 2. 오후 스크리너: 매주 월~금, 한국 시간 오후 4시 00분 (UTC 기준 07:00)
-    - cron: '0 7 * * 1-5'
-  workflow_dispatch: # 수동으로 강제 실행할 수 있는 버튼 활성화
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 저장소 파일 불러오기
-        uses: actions/checkout@v4
-        
-      - name: 파이썬 설치
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          
-      - name: 필수 라이브러리 설치
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas finance-datareader beautifulsoup4 requests google-generativeai google-cloud-firestore
-          
-      - name: 봇 실행 (모닝 브리핑 / 오후 스크리너 자동 분기)
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FIREBASE_JSON: ${{ secrets.FIREBASE_JSON }}
-          USER_ID: ${{ secrets.USER_ID }}
-        run: |
-          # 현재 시간이 UTC 23시(한국 아침 8시)인지, UTC 07시(한국 오후 4시)인지 확인
-          CURRENT_HOUR=$(date -u +"%H")
-          if [ "$CURRENT_HOUR" == "23" ]; then
-            python bot.py morning
-          elif [ "$CURRENT_HOUR" == "07" ]; then
-            python bot.py afternoon
-          else
-            # 수동 실행 시 기본적으로 스크리너 작동
-            python bot.py afternoon 
-          fi
