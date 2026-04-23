@@ -13,12 +13,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
-USER_ID = os.environ.get("USER_ID", "vip") # 본인의 아이디
+USER_ID = os.environ.get("USER_ID", "vip")
 
-# 💡 [업그레이드] 에러 추적기 및 링크 찌꺼기 완벽 차단 함수
+# 💡 텔레그램 전송 함수
 def send_telegram(text):
     print("▶️ 텔레그램 전송 시도 중...")
-    # 주소에 대괄호 찌꺼기가 붙지 않도록 안전하게 분할 작성
     base_url = "https://" + "api.telegram.org/bot"
     url = f"{base_url}{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -33,8 +32,7 @@ def send_telegram(text):
 # --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
-        # 주소 분할 작성
-        base_url = "https://" + "[news.google.com/rss/search?q=](https://news.google.com/rss/search?q=)"
+        base_url = "https://" + "news.google.com/rss/search?q="
         url = f"{base_url}{keyword}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
@@ -46,6 +44,20 @@ def calculate_cloud_indicators(df):
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    
+    # 💡 [추가] RSI (14일)
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    df['RSI'] = df['RSI'].fillna(50)
+    
+    # 💡 [추가] MACD (12, 26, 9)
+    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
     recent_60 = df.tail(60)
     vol_ref_price = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
@@ -61,8 +73,10 @@ def calculate_cloud_indicators(df):
     current_monthly_ema10 = float(monthly_close.ewm(span=10, adjust=False).mean().iloc[-1])
     
     indicators = {
-        "ATR": latest['ATR'] if not pd.isna(latest['ATR']) else latest['Close']*0.05,
+        "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
         "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
+        "RSI": float(latest['RSI']),
+        "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
         "Cloud_Rules": {
             "주가 > 200일선": bool(latest['Close'] > latest['EMA200']),
             "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']),
@@ -81,6 +95,7 @@ def get_ai_analysis(prompt):
 # --- 3. 핵심 로직: 모닝 브리핑 (아침) ---
 def run_morning_briefing():
     print("🌅 [모닝 브리핑 스케줄러 기동 시작]")
+    send_telegram("🌅 <b>[모닝 브리핑 스케줄러 기동 중...]</b>\n데이터를 수집하고 있습니다.")
     
     import re
     pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
@@ -89,7 +104,7 @@ def run_morning_briefing():
     pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
     private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
     
-    token_url = "https://" + "[oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
+    token_url = "https://" + "oauth2.googleapis.com/token"
     creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": token_url}
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     db = firestore.Client(credentials=creds, project=pm.group(1))
@@ -118,10 +133,9 @@ def run_morning_briefing():
         price, ind = calculate_cloud_indicators(df)
         if ind:
             prof = (price - s['매수단가']) / s['매수단가'] * 100 if s['매수단가'] > 0 else 0
-            stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}"
+            stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, RSI={ind.get('RSI'):.1f}, MACD={'골든크로스' if ind.get('MACD_Cross') else '데드크로스'}"
             portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
             
-            # 가격 정보 저장
             a = float(ind['ATR'])
             portfolio_info_list.append({
                 'name': name, 'price': price, 'stop': price - (a*2), 'target': price + (a*4), 'prof': prof
@@ -131,12 +145,12 @@ def run_morning_briefing():
     market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
     prompt = f"""
     당신은 글로벌 퀀트 전략가입니다. 아래 데이터를 바탕으로 오늘의 모닝 브리핑을 JSON으로 작성해주세요.
+    * 수칙: RSI가 70 이상(과열)이면서 MACD가 데드크로스인 종목은 강력 매도를 권고하세요.
     [시장 뉴스]\n{market_news}\n[포트폴리오]\n{portfolio_context}\n
     [형식]\n{{ "market_overview": "오늘 장 요약(3문장)", "stock_briefings": [ {{"stock": "종목명", "alert_level": "🟢 안전/🟡 주의/🔴 위험", "strategy": "대응 전략(2문장)"}} ], "action_plan": "핵심 지침(1문장)" }}
     """
     res = get_ai_analysis(prompt)
     
-    # 💡 [업그레이드] 텔레그램 메시지 포맷 (현재가/목표가/손절가 명확하게 분리)
     msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n"
     msg += "📊 <b>내 포트폴리오 점검</b>\n"
     for p in portfolio_info_list:
@@ -156,6 +170,7 @@ def run_morning_briefing():
 # --- 4. 핵심 로직: 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
     print("🔍 [오후 타점 스크리너 기동 시작]")
+    send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 스캔을 시작합니다.")
     sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
     
     res_list = []
@@ -165,8 +180,12 @@ def run_afternoon_screener():
             p, ind = calculate_cloud_indicators(df)
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
-                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
-                    # 💡 [업그레이드] 목표가와 손절가를 함께 계산하여 메시지에 추가
+                
+                # 💡 [RSI 및 MACD 필터]
+                is_macd_bullish = ind['MACD_Cross']
+                is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
+                
+                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
                     a = float(ind['ATR'])
                     res_list.append({
                         "name": n, 
@@ -174,22 +193,24 @@ def run_afternoon_screener():
                         "score": sc,
                         "price": p,
                         "target": p + (a * 4),
-                        "stop": p - (a * 2)
+                        "stop": p - (a * 2),
+                        "rsi": ind['RSI'],
+                        "macd": "골든크로스" if is_macd_bullish else "데드크로스"
                     })
             time.sleep(0.5)
         except: pass
         
     res_list.sort(key=lambda x: x['score'], reverse=True)
     
-    # 💡 [업그레이드] 텔레그램 메시지 포맷 (가독성 향상)
     msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
         msg += f"<b>{r['name']}</b> ({r['sig']}) - 통과: {r['score']}/4\n"
+        msg += f" └ 📊 RSI: {r['rsi']:.1f} | MACD: {r['macd']}\n"
         msg += f" └ 💵 현재가: {int(r['price']):,}원\n"
         msg += f" └ 🎯 목표가: {int(r['target']):,}원\n"
         msg += f" └ 🛡️ 손절가: {int(r['stop']):,}원\n\n"
         
-    if not res_list: msg += "월봉 10선 위 안전한 매수 타점 종목이 없습니다."
+    if not res_list: msg += "월봉 10선 및 RSI/MACD 기준 안전한 매수 타점 종목이 없습니다."
     
     send_telegram(msg)
     print("✅ 스크리너 루틴 완료")
