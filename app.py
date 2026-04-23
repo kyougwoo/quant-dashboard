@@ -427,7 +427,8 @@ with tab1:
         else: st.error("계산 불가")
     with info_col2:
         st.markdown("**📰 AI 뉴스 스크랩**")
-        for news in get_recent_news(actual_name)[:4]: st.caption(f"• {news}")
+        # 💡 [UI 수정] caption(흐릿한 글씨)을 write로 변경하여 진하고 선명하게 출력
+        for news in get_recent_news(actual_name)[:4]: st.write(f"• {news}")
 
     st.markdown("---")
     if st.button("📊 3년 백테스팅 실행", use_container_width=True):
