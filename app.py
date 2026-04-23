@@ -198,7 +198,7 @@ if 'portfolio' not in st.session_state or 'current_user' not in st.session_state
     st.session_state.current_user = st.session_state.user_id
 
 # ==========================================
-# 3. 데이터 수집 & 강력한 종목 검색 엔진
+# 3. 데이터 수집 & 퀀트 지표 계산 로직
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
@@ -234,6 +234,25 @@ def get_stock_info(query):
         if res and len(res[0]) > 0: return res[0][0][0], res[0][0][1]
     except: pass
     return None, None
+
+# 💡 [신규 기능] 재무제표 딥다이브 수집 (PER, PBR, 배당수익률 등)
+@st.cache_data(ttl=86400)
+def get_financial_summary(ticker):
+    if not str(ticker).isdigit(): 
+        return "N/A (해외주식은 차트 및 뉴스 위주로 분석합니다)"
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        per = soup.select_one('#_per').text if soup.select_one('#_per') else "N/A"
+        pbr = soup.select_one('#_pbr').text if soup.select_one('#_pbr') else "N/A"
+        dvr = soup.select_one('#_dvr').text if soup.select_one('#_dvr') else "N/A"
+        
+        return f"PER: {per} / PBR: {pbr} / 배당수익률: {dvr}%"
+    except:
+        return "재무 데이터 수집 오류"
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
@@ -389,15 +408,38 @@ with tab1:
         
     if df is not None and not df.empty:
         display_df = df.tail(90)
-        fig = go.Figure(data=[go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가")])
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='magenta', width=1.5), name='5 EMA'))
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='yellow', width=1.5), name='15 EMA'))
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='black', width=2.5, dash='dot'), name='200 EMA'))
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='red', width=2, dash='dash'), name='최대 매물대'))
-        fig.update_layout(title="최근 3개월 지표", xaxis_rangeslider_visible=False, height=350, margin=dict(l=5, r=5, t=40, b=5), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode=False)
+        
+        fig = go.Figure()
+        fig.add_trace(go.Candlestick(
+            x=display_df.index, 
+            open=display_df['Open'], high=display_df['High'], 
+            low=display_df['Low'], close=display_df['Close'], 
+            name="주가",
+            increasing_line_color='#ef4444', decreasing_line_color='#3b82f6'
+        ))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#8b5cf6', width=1.5), name='5일선'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#f59e0b', width=1.5), name='15일선'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#10b981', width=2, dash='dash'), name='최대매물대'))
+        
+        fig.update_layout(
+            xaxis_rangeslider_visible=False, 
+            height=400, 
+            margin=dict(l=10, r=10, t=10, b=20), 
+            legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, font=dict(size=11)),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', tickfont=dict(size=10)),
+            yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', tickfont=dict(size=10)),
+            dragmode=False
+        )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     st.markdown("---")
+    
+    # 💡 [업그레이드] 재무제표 딥다이브 데이터 수집 (화면에도 표시)
+    fin_data = get_financial_summary(ticker)
+    
     info_col1, info_col2 = st.columns(2)
     with info_col1:
         st.markdown("**☁️ 클라우드 4원칙**")
@@ -409,6 +451,10 @@ with tab1:
             if tech_ind.get('Is_Above_Monthly_EMA10'): st.success(f"🟢 안전 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 돌파)")
             else: st.error(f"🔴 위험 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 이탈)")
         else: st.error("계산 불가")
+        
+        st.markdown("**📊 펀더멘털 (재무제표)**")
+        st.caption(f"🔍 {fin_data}")
+        
     with info_col2:
         st.markdown("**📰 AI 뉴스 스크랩**")
         for news in get_recent_news(actual_name)[:4]: st.write(f"• {news}")
@@ -425,11 +471,12 @@ with tab1:
 
     if df is not None and not df.empty:
         st.markdown("---")
-        st.markdown("### 🤖 Harness 3-Agent AI 분석 엔진")
-        st.caption("기술적 분석가, 기본적 분석가, 리스크 관리자가 데이터를 다각도로 분석하여 최종 결론을 도출합니다.")
+        st.markdown("### 🤖 Harness 3-Agent AI 분석 엔진 (펀더멘털 강화)")
+        st.caption("기술적 분석가, 기본적 분석가, 리스크 관리자가 다각도로 분석하여 최종 결론을 도출합니다.")
         
         if st.button("🚀 3-Agent 분석 실행", type="primary", use_container_width=True):
             with st.spinner("3명의 AI 에이전트가 토론 중입니다... (약 10~20초 소요)"):
+                # 💡 [업그레이드] 재무 데이터 주입 및 AI에게 역할 엄격 분리 지시
                 prompt = f"""
                 당신은 'Harness 3-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다.
                 아래 종목의 시장 데이터를 바탕으로 3명의 에이전트(기술적 분석가, 기본적 분석가, 리스크 관리자)의 시각에서 심층 분석을 수행하세요.
@@ -439,7 +486,12 @@ with tab1:
                 - 단기 클라우드 통과: {sum(1 for v in tech_ind["Cloud_Rules"].values() if v)}/4
                 - 월봉 10선 추세: {'안전(상승추세)' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험(하락추세)'}
                 - 터틀 손절가: {format_price(stop_loss, ticker)}
+                - 펀더멘털 요약: {fin_data}
                 - 최근 주요 뉴스: {get_recent_news(actual_name)}
+                
+                [🚨 리스크 관리자(Agent 3) 절대 수칙]
+                1. 매수/관망/매도의 '타이밍'은 무조건 차트(월봉 10선 추세 및 클라우드 통과 여부)를 기준으로만 판단하세요.
+                2. '재무제표(PER, PBR 등)'와 '뉴스' 데이터는 오직 추천 투자 비중(Position Size, 0%~100%)을 정하거나, 상장폐지 급의 악재를 필터링하는 용도로만 사용하세요.
 
                 [출력 형식 (반드시 유효한 JSON 형식으로만 응답할 것)]
                 {{
@@ -449,10 +501,10 @@ with tab1:
                   }},
                   "fundamentalAgent": {{
                     "score": -10부터 10 사이의 정수 (10이 강력 호재),
-                    "reasoning": "기본적 분석가 에이전트의 뉴스 감성 및 모멘텀 기반 심층 분석 의견 (3~4문장)"
+                    "reasoning": "기본적 분석가 에이전트의 재무제표 가치 평가 및 뉴스 모멘텀 기반 심층 분석 의견 (3~4문장)"
                   }},
                   "riskManager": {{
-                    "action": "매수", "매도", 또는 "관망" 중 택 1 (월봉 10선 위험 시 무조건 보수적 접근),
+                    "action": "매수", "매도", 또는 "관망" 중 택 1,
                     "positionSize": "비중 0% ~ 100% 제시",
                     "reasoning": "앞선 두 에이전트의 의견을 종합하여 리스크 관리자가 내리는 최종 결론 (3~4문장)"
                   }}
@@ -497,14 +549,12 @@ with tab2:
             
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         
-        # 💡 [모바일 최적화] 데이터 연산
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
         total_invest = (dis_df['매수단가'] * dis_df['수량']).sum()
         total_value = dis_df['평가금액'].sum()
         total_profit = dis_df['수익금'].sum()
         total_yield = (total_profit / total_invest * 100) if total_invest > 0 else 0
 
-        # 시각화 대시보드 렌더링 (모바일 화면 자동 쌓임)
         st.markdown("### 📊 내 자산 요약")
         m1, m2, m3 = st.columns(3)
         m1.metric("총 매수금액", f"{int(total_invest):,}원" if total_invest > 1000 else f"${total_invest:,.2f}")
@@ -515,19 +565,16 @@ with tab2:
         
         viz_col1, viz_col2 = st.columns(2)
         with viz_col1:
-            # 1. 도넛 차트 (모바일 최적화: 여백 최소화, 터치 방해 도구모음 제거)
             fig_pie = go.Figure(data=[go.Pie(labels=dis_df['종목명'], values=dis_df['평가금액'], hole=.4, textinfo='percent', textposition='inside')])
             fig_pie.update_layout(title_text="자산 비중", height=250, margin=dict(l=10, r=10, t=40, b=10), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
             st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
             
         with viz_col2:
-            # 2. 바 차트 (모바일 최적화: 좁은 화면 배려, 여백 최소화)
             bar_colors = ['#ef4444' if r > 0 else '#3b82f6' for r in dis_df['수익률(%)']]
             fig_bar = go.Figure(data=[go.Bar(x=dis_df['종목명'], y=dis_df['수익률(%)'], marker_color=bar_colors, text=dis_df['수익률(%)'].apply(lambda x: f"{x:.1f}%"), textposition='outside')])
-            fig_bar.update_layout(title_text="종목별 수익률", height=250, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False)) # 공간 절약 위해 x축 텍스트 숨김
+            fig_bar.update_layout(title_text="종목별 수익률", height=250, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False))
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
 
-        # 기존 표 렌더링
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
         
         orig_vals = st.session_state.portfolio[['매수단가', '수량']].fillna(0).values.tolist()
@@ -544,17 +591,18 @@ with tab2:
                 with st.spinner("개별 종목 정밀 진단 중..."):
                     txt = ""
                     for _, r in dis_df.iterrows():
-                        _, tck = get_stock_info(r['종목명']); stat = "불가"
+                        _, tck = get_stock_info(r['종목명']); stat = "불가"; p_fin = "N/A"
                         if tck:
                             try:
                                 df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
-                                if ind: stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
+                                if ind: stat = f"월봉10선({'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}), 200일선 위({'O' if ind['Cloud_Rules']['주가 > 200일선'] else 'X'})"
+                                p_fin = get_financial_summary(tck)
                             except: pass
-                        txt += f"- [{r['종목명']}] 수익률: {r['수익률(%)']:.2f}%, 상태: {stat}\n"
+                        txt += f"- [{r['종목명']}] 수익률: {r['수익률(%)']:.2f}%, 차트상태: {stat}, 재무상태: {p_fin}\n"
                     
                     diag_prompt = f"""
                     당신은 최고 수준의 퀀트 투자 전략가입니다. 아래 [포트폴리오]에 포함된 개별 종목들의 상태를 진단해주세요.
-                    * 월봉10선이 '위험'인 종목은 전량매도를 권고해주세요.
+                    * 핵심 수칙: 월봉10선이 '위험'인 종목은 재무 상태와 무관하게 전량매도를 강력히 권고해주세요.
                     [포트폴리오 데이터]\n{txt}\n
                     [출력 형식 (JSON)]\n{{ "results": [ {{ "stock": "종목명", "action": "매수 / 관망 / 매도", "reason": "이유 1문장" }} ] }}
                     """
@@ -574,7 +622,7 @@ with tab2:
                         market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
                         portfolio_context = ""
                         for _, r in dis_df.iterrows():
-                            name = r['종목명']; profit = r['수익률(%)']; _, tck = get_stock_info(name); stat = "데이터 부족"; stop_loss_val = 0; news_list = []
+                            name = r['종목명']; profit = r['수익률(%)']; _, tck = get_stock_info(name); stat = "데이터 부족"; stop_loss_val = 0; news_list = []; p_fin = "N/A"
                             if tck:
                                 try:
                                     df_stock, ind = calculate_cloud_indicators(fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
@@ -582,11 +630,13 @@ with tab2:
                                         stop_loss_val = float(df_stock['Close'].iloc[-1]) - (float(ind.get('ATR', 0)) * 2)
                                         stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}"
                                     news_list = get_recent_news(name)[:2]
+                                    p_fin = get_financial_summary(tck)
                                 except: pass
-                            portfolio_context += f"- [{name}] 수익률: {profit:.2f}%, 손절가: {format_price(stop_loss_val, tck)}, 지표: {stat}, 뉴스: {news_list}\n"
+                            portfolio_context += f"- [{name}] 수익률: {profit:.2f}%, 손절가: {format_price(stop_loss_val, tck)}, 지표: {stat}, 재무: {p_fin}, 뉴스: {news_list}\n"
                         
                         briefing_prompt = f"""
                         당신은 글로벌 퀀트 전략가입니다. 포트폴리오 대응 전략 (모닝 브리핑)을 JSON으로 작성해주세요.
+                        * 핵심 수칙: 매도 등 대응 타이밍은 절대적으로 '지표(차트)'에 의존하고, '재무'와 '뉴스'는 비중 조절 참고용으로만 활용하세요.
                         [시장 뉴스]\n{market_news}\n[포트폴리오]\n{portfolio_context}\n
                         [형식]\n{{ "market_overview": "오늘 장 요약(3문장)", "stock_briefings": [ {{"stock": "종목명", "alert_level": "🟢 안전/🟡 주의/🔴 위험", "strategy": "대응 전략(2문장)"}} ], "action_plan": "핵심 지침(1문장)" }}
                         """
