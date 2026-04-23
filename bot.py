@@ -15,14 +15,23 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
 USER_ID = os.environ.get("USER_ID", "vip") # 본인의 아이디
 
+# 💡 [업그레이드] 에러 추적기가 탑재된 텔레그램 전송 함수
 def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"})
+    print("▶️ 텔레그램 전송 시도 중...")
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_TOKEN}/sendMessage"
+    try:
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"})
+        if res.status_code != 200:
+            print(f"🚨 텔레그램 전송 실패! 원인: {res.text}")
+        else:
+            print("✅ 텔레그램 메시지 발송 완료!")
+    except Exception as e:
+        print(f"🚨 네트워크 오류: {e}")
 
 # --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
-        res = requests.get(f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
+        res = requests.get(f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
     except: return []
@@ -66,8 +75,9 @@ def get_ai_analysis(prompt):
 
 # --- 3. 핵심 로직: 모닝 브리핑 (아침) ---
 def run_morning_briefing():
+    print("🌅 [모닝 브리핑 스케줄러 기동 시작]")
     send_telegram("🌅 <b>[모닝 브리핑 스케줄러 기동 중...]</b>\n데이터를 수집하고 있습니다.")
-    # Firebase 연결 및 포트폴리오 로드
+    
     import re
     pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
     em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', FIREBASE_JSON)
@@ -75,7 +85,7 @@ def run_morning_briefing():
     pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
     private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
     
-    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"}
+    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"}
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     db = firestore.Client(credentials=creds, project=pm.group(1))
     
@@ -87,12 +97,11 @@ def run_morning_briefing():
     stocks = doc.to_dict().get('stocks', [])
     portfolio_context = ""
     
-    # 💡 하드코딩된 한국 대형주 티커 딕셔너리 (검색 오류 방지용)
     ticker_map = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "기아":"000270", "LG에너지솔루션":"373220"}
     
     for s in stocks:
         name = s['종목명']
-        tck = ticker_map.get(name) # 단순화된 티커 맵핑
+        tck = ticker_map.get(name)
         if not tck:
             try:
                 krx = fdr.StockListing('KRX')
@@ -106,6 +115,7 @@ def run_morning_briefing():
             stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}"
             portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
 
+    print("🧠 AI 분석 중...")
     market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
     prompt = f"""
     당신은 글로벌 퀀트 전략가입니다. 아래 데이터를 바탕으로 오늘의 모닝 브리핑을 JSON으로 작성해주세요.
@@ -119,9 +129,11 @@ def run_morning_briefing():
     msg += f"\n💡 <b>오늘의 지침:</b> {res['action_plan']}"
     
     send_telegram(msg)
+    print("✅ 모닝 브리핑 루틴 완료")
 
 # --- 4. 핵심 로직: 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
+    print("🔍 [오후 타점 스크리너 기동 시작]")
     send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 스캔을 시작합니다.")
     sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
     
@@ -143,10 +155,13 @@ def run_afternoon_screener():
     if not res_list: msg += "월봉 10선 위 안전한 매수 타점 종목이 없습니다."
     
     send_telegram(msg)
+    print("✅ 스크리너 루틴 완료")
 
 # --- 5. 실행 제어 (명령어에 따라 구분) ---
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    print(f"🚀 봇 실행 모드: {mode}")
+    
     if mode == "morning":
         run_morning_briefing()
     elif mode == "afternoon":
