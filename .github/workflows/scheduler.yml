@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 저장소 파일 불러오기
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # <--- 요기가 v4로 최신화됨
         
       - name: 파이썬 설치
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # <--- 요기가 v5로 최신화됨
         with:
           python-version: '3.10'
           
