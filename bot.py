@@ -16,13 +16,13 @@ FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
 USER_ID = os.environ.get("USER_ID", "vip") # 본인의 아이디
 
 def send_telegram(text):
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"})
 
 # --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
-        res = requests.get(f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
+        res = requests.get(f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
     except: return []
@@ -75,7 +75,7 @@ def run_morning_briefing():
     pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
     private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
     
-    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"}
+    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"}
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     db = firestore.Client(credentials=creds, project=pm.group(1))
     
