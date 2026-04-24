@@ -176,7 +176,7 @@ def calculate_cloud_indicators(df):
     }
     return df, indicators
 
-# 💡 [업그레이드] 런 백테스트: 차트에 찍을 Buy/Sell 마커 기록 추가
+# 💡 런 백테스트: 차트에 찍을 Buy/Sell 마커 기록 추가
 def run_backtest_with_markers(df):
     trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
     buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
@@ -227,11 +227,11 @@ with tab1:
         try: 
             raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, tech_ind = calculate_cloud_indicators(raw_df)
-            stats, buy_m, sell_m = run_backtest_with_markers(df) # 백테스트 자동 실행
+            stats, buy_m, sell_m = run_backtest_with_markers(df) 
         except: df = None; tech_ind = {}
         
     if df is not None and not df.empty:
-        display_df = df.tail(120) # 120일로 차트 표시 기간 약간 확대
+        display_df = df.tail(120) 
         
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가", increasing_line_color='#ef4444', decreasing_line_color='#3b82f6'))
@@ -239,7 +239,6 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#f59e0b', width=1.5), name='15일선'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'))
         
-        # 💡 [업그레이드] Buy / Sell 마커 차트에 추가
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]; b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]; s_y = [sell_m['y'][i] for i, x in enumerate(sell_m['x']) if x >= display_df.index[0]]
         
@@ -249,25 +248,20 @@ with tab1:
         fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=10, b=20), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, font=dict(size=11)))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 타점 상세 안내 패널
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
         curr_p = float(df['Close'].iloc[-1])
-        entry2 = float(tech_ind['EMA15']) # 15일선 지지점
+        entry2 = float(tech_ind['EMA15'])
         tar_p = curr_p + (float(tech_ind['ATR']) * 4)
         stop_p = curr_p - (float(tech_ind['ATR']) * 2)
         
-        # 현재가 기준 손익비
         rr_1 = (tar_p - curr_p) / (curr_p - stop_p) if (curr_p - stop_p) > 0 else 0
-        # 2차 타점(눌림목) 기준 손익비
         rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
 
         c1.markdown("🎯 **추천 매수 타점**")
         c1.info(f"**1차:** {int(curr_p):,}원 (돌파)\n\n**2차:** {int(entry2):,}원 (눌림)")
-        
         c2.markdown("🛡️ **목표 및 손절 라인**")
         c2.warning(f"**목표가:** {int(tar_p):,}원\n\n**손절가:** {int(stop_p):,}원")
-        
         c3.markdown("⚖️ **타점 매력도 (손익비)**")
         c3.success(f"**현재가 진입시:** {rr_1:.1f}배\n\n**2차 진입시:** {rr_2:.1f}배 (극대화)")
 
@@ -302,15 +296,15 @@ with tab3:
                 df_res = pd.DataFrame(res)
                 st.dataframe(df_res, use_container_width=True, hide_index=True)
                 
-                # 💡 [업그레이드] 텔레그램 메시지에 1/2차 타점 및 손익비 추가
+                # 💡 [핵심 업그레이드] 웹에서 텔레그램 전송 시 1/2차 타점 및 손익비 확실하게 포함!
                 if send_to_telegram and tele_token and tele_chat_id:
-                    chunks = []; msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n"
+                    chunks = []; msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개 종목 발견\n\n"
                     for r in res:
-                        info = f"<b>{r['종목명']}</b> ({r['시그널']})\n"
+                        info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n"
                         info += f" └ 🎯 <b>매수:</b> 1차 {int(r['현재가']):,}원 / 2차 {int(r['2차타점']):,}원\n"
                         info += f" └ 🎯 <b>목표:</b> {int(r['목표가']):,}원\n"
                         info += f" └ 🛡️ <b>손절:</b> {int(r['손절가']):,}원\n"
-                        info += f" └ ⚖️ <b>손익비(2차 기준):</b> {r['손익비_2차']:.1f}배\n\n"
+                        info += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['손익비_2차']:.1f}배 극대화\n\n"
                         if len(msg) + len(info) > 3800: chunks.append(msg); msg = info
                         else: msg += info
                     chunks.append(msg)
