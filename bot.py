@@ -183,6 +183,7 @@ def run_afternoon_screener():
                         "name": n, 
                         "sig": "🔥 강력" if sc==4 else "👍 분할", 
                         "score": sc,
+                        "rules": ind["Cloud_Rules"], # 💡 세부 조건들 통째로 저장
                         "price": p,
                         "entry2": entry2,
                         "target": tar_p,
@@ -198,7 +199,11 @@ def run_afternoon_screener():
     
     msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
-        msg += f"🔥 <b>{r['name']}</b> ({r['sig']}) - 통과: {r['score']}/4\n"
+        # 💡 [업그레이드] 세부 조건 합격여부 문자열로 풀어서 표시
+        rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
+        
+        msg += f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
+        msg += f" └ ☁️ <b>조건:</b> {rule_details}\n"
         msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']}\n"
         msg += f" └ 🎯 <b>매수:</b> 1차 {int(r['price']):,}원 / 2차 {int(r['entry2']):,}원\n"
         msg += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
