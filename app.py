@@ -154,7 +154,7 @@ if 'portfolio' not in st.session_state or st.session_state.get('current_user') !
     st.session_state.portfolio, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
 # ==========================================
-# 3. 잃어버렸던 모든 데이터 수집 및 연산 로직 복구
+# 3. 데이터 수집 및 연산 로직
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
@@ -196,7 +196,6 @@ def get_top_200_stocks():
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380"}
 
-# 💡 [복구 완료] 미국 주식 스크리닝 기능!
 @st.cache_data(ttl=86400)
 def get_us_top_stocks():
     try:
@@ -345,7 +344,6 @@ with tab1:
         fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=10, r=10, t=10, b=20), legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, font=dict(size=11)))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 💡 [복구] 1/2차 타점 표시 패널
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
         curr_p = float(df['Close'].iloc[-1])
@@ -363,7 +361,6 @@ with tab1:
         c3.markdown("⚖️ **타점 매력도 (손익비)**")
         c3.success(f"**현재가 진입시:** {rr_1:.1f}배\n\n**2차 진입시:** {rr_2:.1f}배 (극대화)")
 
-        # 💡 [복구] 펀더멘털 및 백테스트
         st.markdown("---")
         fin_data = get_financial_summary(ticker)
         info_col1, info_col2 = st.columns(2)
@@ -394,9 +391,8 @@ with tab1:
                 bc2.metric("승률", f"{stats['win_rate']:.1f}%")
                 bc3.metric("누적 수익률", f"{stats['total_return']:.1f}%")
 
-        # 💡 [완벽 복구] 🤖 Harness 4-Agent AI 분석 엔진
         st.markdown("---")
-        st.markdown("### 🤖 Harness 4-Agent AI 분석 엔진 (개인화 + 매크로 + RSI/MACD)")
+        st.markdown("### 🤖 Harness 4-Agent AI 분석 엔진")
         st.caption(f"거시경제, 기술적, 기본적, 리스크 관리자가 다각도로 토론하여 **'{st.session_state.invest_style}'** 성향에 맞춘 결론을 냅니다.")
         
         if st.button("🚀 4-Agent 분석 실행", type="primary", use_container_width=True):
@@ -445,7 +441,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 (차트, AI 분석 모두 복구)
+# [탭 2] 포트폴리오
 # -----------------------------------------------------
 with tab2:
     st.subheader(f"💼 {st.session_state.user_id}님의 포트폴리오")
@@ -552,11 +548,10 @@ with tab2:
     else: st.info("등록된 종목이 없습니다.")
 
 # -----------------------------------------------------
-# [탭 3] VIP 검색기 (미국 주식 완벽 복구, 1/2차 타점 포함)
+# [탭 3] VIP 검색기
 # -----------------------------------------------------
 with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
-    # 💡 [복구] 미국 S&P500 스크리닝 옵션 부활!
     mode = st.radio("모드", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"])
     send_to_telegram = st.checkbox("📱 스캔 완료 시 텔레그램 전송", value=True)
     
@@ -567,7 +562,7 @@ with tab3:
         with st.spinner("전체 시장 종목을 불러오는 중입니다... (1~2분 소요)"):
             if "한국 우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270"}
             elif "한국 코스피" in mode: sl = get_top_200_stocks()
-            else: sl = get_us_top_stocks() # 미국 주식 가져오기
+            else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
             
@@ -585,11 +580,13 @@ with tab3:
                             tar_p = p + (a*4); stop_p = p - (a*2); entry2 = float(ind['EMA15'])
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
+                            # 💡 [업그레이드] 세부 합격 여부 분해
+                            rule_str = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in ind["Cloud_Rules"].items()])
+                            
                             res.append({
                                 "종목명": n, 
                                 "시그널": "🔥 강력" if sc==4 else "👍 분할", 
-                                "통과": f"{sc}/4", 
-                                "통화": "KRW" if str(c).isdigit() else "USD", 
+                                "클라우드 세부조건": rule_str, 
                                 "현재가": p, 
                                 "2차타점": entry2, 
                                 "목표가": tar_p, 
@@ -603,21 +600,26 @@ with tab3:
             txt.text("✅ 스캔 완료!")
             
             if res:
-                df_res = pd.DataFrame(res).sort_values(by="통과", ascending=False)
-                # DataFrame 시각적 포맷팅 (달러/원화 표시 분리 안함, 데이터 자체는 float 유지)
+                # 💡 [업그레이드] 불필요했던 "통화", "통과" 열을 삭제하고 세부조건 적용
+                df_res = pd.DataFrame(res)
                 st.dataframe(df_res, use_container_width=True, hide_index=True)
                 st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv")
                 
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []; msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개 종목 발견\n\n"
                     for r in res:
-                        # 💡 [복구] 한국 주식은 '원', 미국 주식은 달러 '$' 표시 완벽 분리 적용
-                        if r['통화'] == "KRW":
+                        # 💡 [복구] 한국 주식은 '원', 미국 주식은 달러 '$' 표시 분리
+                        if "KRW" in str(sl.get(r['종목명'], "")): # 통화 열이 사라졌으므로 여기서 판단
+                            pass # 위에서 KRW/USD 구분이 사라졌기 때문에 통일
+                        # 가격 포맷팅 (원화/달러 구분)
+                        is_krw = str(sl.get(r['종목명'], "A")).isdigit()
+                        if is_krw:
                             curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
                         else:
                             curr_p = f"${r['현재가']:,.2f}"; tar_p = f"${r['목표가']:,.2f}"; stop_p = f"${r['손절가']:,.2f}"; entry2_p = f"${r['2차타점']:,.2f}"
 
                         info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n"
+                        info += f" └ ☁️ <b>조건:</b> {r['클라우드 세부조건']}\n"
                         info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']}\n"
                         info += f" └ 🎯 <b>매수:</b> 1차 {curr_p} / 2차 {entry2_p}\n"
                         info += f" └ 🎯 <b>목표:</b> {tar_p}\n"
