@@ -103,8 +103,12 @@ def run_morning_briefing():
     if not doc.exists:
         send_telegram("⚠️ 등록된 포트폴리오가 없습니다.")
         return
-        
-    stocks = doc.to_dict().get('stocks', [])
+    
+    # 💡 [업그레이드] 현금 추적 데이터 구조 호환되도록 가져오기
+    doc_data = doc.to_dict()
+    stocks = doc_data.get('stocks', []) if 'stocks' in doc_data else (doc_data if isinstance(doc_data, list) else [])
+    realized_profit = doc_data.get('realized_profit', 0) if isinstance(doc_data, dict) else 0
+    
     portfolio_context = ""
     portfolio_info_list = []
     
@@ -142,6 +146,7 @@ def run_morning_briefing():
     res = get_ai_analysis(prompt)
     
     msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n"
+    msg += f"💰 <b>내 가계부 현황</b>: 누적 실현손익 {int(realized_profit):,}원\n\n"
     msg += "📊 <b>내 포트폴리오 점검</b>\n"
     for p in portfolio_info_list:
         msg += f"🔹 <b>{p['name']}</b> (수익률: {p['prof']:.1f}%)\n"
@@ -183,7 +188,7 @@ def run_afternoon_screener():
                         "name": n, 
                         "sig": "🔥 강력" if sc==4 else "👍 분할", 
                         "score": sc,
-                        "rules": ind["Cloud_Rules"], # 💡 세부 조건들 통째로 저장
+                        "rules": ind["Cloud_Rules"],
                         "price": p,
                         "entry2": entry2,
                         "target": tar_p,
@@ -199,7 +204,6 @@ def run_afternoon_screener():
     
     msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
-        # 💡 [업그레이드] 세부 조건 합격여부 문자열로 풀어서 표시
         rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
         
         msg += f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
