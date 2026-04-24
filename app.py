@@ -62,7 +62,6 @@ for k in ['logged_in', 'user_id', 'user_tier']:
     if k not in st.session_state: st.session_state[k] = False if k == 'logged_in' else 'guest' if k == 'user_id' else 'Free'
 if 'invest_style' not in st.session_state: st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
 
-# 💡 상단 계정 및 환경 설정
 st.markdown("<h1>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("**(클라우드 타점 분석 + 자동 예수금 트래킹 + AI 리밸런싱)**")
 
@@ -101,7 +100,6 @@ with st.expander("👤 내 계정 및 시스템 설정", expanded=not st.session
         if not gemini_api_key: gemini_api_key = st.text_input("Gemini API Key", type="password")
         tele_token = str(st.secrets.get("TELEGRAM_TOKEN", "")).strip()
         tele_chat_id = ""
-        
         if st.session_state.logged_in and db:
             user_ref = db.collection('users').document(st.session_state.user_id)
             tele_chat_id = user_ref.get().to_dict().get('telegram_chat_id', "") if user_ref.get().exists else ""
@@ -116,7 +114,6 @@ def send_telegram_message(token, chat_id, text):
     try: return requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
     except: return False
 
-# 💡 [핵심 복구] 가계부용 포트폴리오 데이터 구조 로드
 def load_portfolio():
     default_data = {'initial_capital': 0, 'realized_profit': 0, 'stocks': []}
     if db:
@@ -128,13 +125,11 @@ def load_portfolio():
                     return {'initial_capital': 0, 'realized_profit': 0, 'stocks': data['stocks']}
                 return data
         except: pass
-    
     file_name = f'portfolio_data_{st.session_state.user_id}.json'
     if os.path.exists(file_name):
         try:
             with open(file_name, 'r') as f: return json.load(f)
         except: pass
-        
     return default_data
 
 def save_portfolio(data):
@@ -147,9 +142,6 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# ==========================================
-# 3. 데이터 수집 및 연산 로직
-# ==========================================
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
     query = str(query).strip().upper()
@@ -277,9 +269,6 @@ def get_current_price(ticker):
         return float(df['Close'].iloc[-1]) if not df.empty else 0.0
     except: return 0.0
 
-# ==========================================
-# 4. 메인 화면
-# ==========================================
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "알테오젠", "애플(AAPL)"])
 with col_s2:
@@ -290,7 +279,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 tab1, tab2, tab3 = st.tabs(["📊 차트 & 타점 분석", "💼 현금 트래킹 및 AI 리밸런싱", "🔍 매수 급소 스크리너"])
 
 # -----------------------------------------------------
-# [탭 1] 차트 & 타점 분석
+# [완벽 복구] 탭 1: 차트 & 타점 분석 (뉴스, 재무제표, 백테스팅 포함)
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -333,7 +322,40 @@ with tab1:
         c3.markdown("⚖️ **타점 매력도 (손익비)**")
         c3.success(f"**현재가 진입시:** {rr_1:.1f}배\n\n**2차 진입시:** {rr_2:.1f}배 (극대화)")
 
+        # 💡 [여기서부터 잃어버렸던 펀더멘털, 4원칙, 뉴스, 백테스팅 복구]
         st.markdown("---")
+        fin_data = get_financial_summary(ticker)
+        info_col1, info_col2 = st.columns(2)
+        
+        with info_col1:
+            st.markdown("**☁️ 클라우드 4원칙**")
+            if tech_ind:
+                for rule, passed in tech_ind["Cloud_Rules"].items(): st.write(f"{'✅' if passed else '❌'} {rule}")
+                rsi_val = tech_ind.get('RSI', 50)
+                rsi_sig = "🔥과열" if rsi_val >= 70 else "❄️침체" if rsi_val <= 30 else "보통"
+                macd_cross = "🟢골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴데드크로스(매도)"
+                st.info(f"**RSI (14):** {rsi_val:.1f} ({rsi_sig})  |  **MACD:** {macd_cross}")
+                st.markdown("**📅 월봉 10선 추세**")
+                if tech_ind.get('Is_Above_Monthly_EMA10'): st.success(f"🟢 안전 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 돌파)")
+                else: st.error(f"🔴 위험 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 이탈)")
+            st.markdown("**📊 펀더멘털 (재무제표)**")
+            st.caption(f"🔍 {fin_data}")
+            
+        with info_col2:
+            st.markdown("**📰 AI 뉴스 스크랩**")
+            for news in get_recent_news(actual_name)[:4]: st.write(f"• {news}")
+
+        st.markdown("---")
+        if st.button("📊 3년 백테스팅 실행", use_container_width=True):
+            with st.spinner("시뮬레이션 중..."):
+                bc1, bc2, bc3 = st.columns(3)
+                bc1.metric("매매 횟수", f"{stats['total_trades']}회")
+                bc2.metric("승률", f"{stats['win_rate']:.1f}%")
+                bc3.metric("누적 수익률", f"{stats['total_return']:.1f}%")
+
+        st.markdown("---")
+        st.markdown("### 🤖 Harness 4-Agent AI 분석 엔진")
+        st.caption(f"거시경제, 기술적, 기본적, 리스크 관리자가 다각도로 토론하여 **'{st.session_state.invest_style}'** 성향에 맞춘 결론을 냅니다.")
         if st.button("🚀 4-Agent 분석 실행", type="primary", use_container_width=True):
             if not gemini_api_key: st.error("위쪽 계정 설정에서 API Key를 입력하세요!"); st.stop()
             with st.spinner("4명의 AI 에이전트가 토론 중입니다... (약 10초 소요)"):
@@ -353,7 +375,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# 💡 [완벽 복구] 탭 2: 현금 트래킹 및 AI 리밸런싱
+# 💡 [완벽 복구] 탭 2: 현금 트래킹 및 AI 리밸런싱 (파이/바 차트, 모닝브리핑 복구)
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -386,6 +408,7 @@ with tab2:
             total_unrealized_profit += prof
             total_asset_value += (p * r['수량'])
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
+        dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
 
     # 3. 자동 트래킹 요약 대시보드
     st.markdown("### 📊 현금 및 계좌 잔고 현황")
@@ -396,6 +419,19 @@ with tab2:
     m4.metric("누적 실현손익 (가계부)", f"{int(p_data['realized_profit']):,}원", delta=f"{int(total_unrealized_profit):,}원 (현재 평가손익)")
 
     st.markdown("---")
+
+    # 💡 [여기서부터 잃어버렸던 파이 차트 & 바 차트 시각화 복구]
+    if not dis_df.empty:
+        v1, v2 = st.columns(2)
+        with v1:
+            fig_p = go.Figure(data=[go.Pie(labels=dis_df['종목명'], values=dis_df['평가금액'], hole=.4, textinfo='percent', textposition='inside')])
+            fig_p.update_layout(title_text="자산 비중", height=250, margin=dict(l=10, r=10, t=40, b=10), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+            st.plotly_chart(fig_p, use_container_width=True, config={'displayModeBar': False})
+        with v2:
+            bar_colors = ['#ef4444' if r > 0 else '#3b82f6' for r in dis_df['수익률(%)']]
+            fig_b = go.Figure(data=[go.Bar(x=dis_df['종목명'], y=dis_df['수익률(%)'], marker_color=bar_colors, text=dis_df['수익률(%)'].apply(lambda x: f"{x:.1f}%"), textposition='outside')])
+            fig_b.update_layout(title_text="종목별 수익률", height=250, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False))
+            st.plotly_chart(fig_b, use_container_width=True, config={'displayModeBar': False})
 
     # 4. 매수 / 매도 컨트롤 패널
     buy_tab, sell_tab = st.tabs(["🛒 종목 매수 (추가)", "💰 종목 매도 (실현손익 기록)"])
@@ -435,47 +471,73 @@ with tab2:
         else:
             st.info("매도할 보유 종목이 없습니다.")
 
-    # 5. 보유 종목 리스트 표시
+    # 5. 보유 종목 리스트 표시 및 수정 (데이터 에디터)
     if not dis_df.empty:
         st.markdown("<br>### 📋 현재 보유 종목", unsafe_allow_html=True)
-        st.dataframe(dis_df[['종목명', '매수단가', '수량', '현재가', '수익금', '수익률(%)']].style.format({'매수단가': '{:,.0f}', '현재가': '{:,.0f}', '수익금': '{:,.0f}', '수익률(%)': '{:.2f}%'}), use_container_width=True, hide_index=True)
+        edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), column_config={"종목명": st.column_config.TextColumn(disabled=True), "현재가": st.column_config.NumberColumn(disabled=True), "수익금": st.column_config.NumberColumn(disabled=True), "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True)}, hide_index=True, use_container_width=True)
+        
+        # 에디터에서 수량이나 단가가 변경되면 연동
+        if str(pd.DataFrame(p_data['stocks'])[['매수단가', '수량']].fillna(0).values.tolist()) != str(edt_df[['매수단가', '수량']].fillna(0).values.tolist()):
+            p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
+            save_portfolio(p_data); st.rerun()
         
         st.markdown("---")
-        if st.button("✨ 펀드매니저 AI 리밸런싱 (자산 배분 지시서)", use_container_width=True):
-            if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
-            with st.spinner("계좌 자금 흐름과 종목간 상관관계를 분석 중입니다..."):
-                txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
-                
-                rebalance_prompt = f"""
-                당신은 자산운용 펀드매니저입니다. 고객의 투자 성향은 '{st.session_state.invest_style}'입니다.
-                아래 [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
-
-                [계좌 자산 현황]
-                - 총 자산: {int(total_asset_value):,}원
-                - 현재 보유 예수금(현금): {int(remaining_cash):,}원 (비중: {remaining_cash/total_asset_value*100:.1f}%)
-
-                [현재 보유 종목]
-                {txt}
-
-                [분석 수칙]
-                1. 현금 비중이 10% 미만이면 위험 상태로 간주, 수익 중인 종목 매도를 통해 현금 확보 지시.
-                2. 종목들이 특정 섹터에 몰려있다면 헷징을 위해 방어주 편입 지시.
-                3. 출력 형식 (JSON): {{ "market_view": "브리핑 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "이유" }} ], "final_advice": "최종 조언" }}
-                """
-                try:
-                    res = get_ai_analysis(rebalance_prompt, gemini_api_key)
-                    st.success("✅ AI 리밸런싱 지시서가 도착했습니다.")
-                    st.info(f"**📊 포트폴리오 진단:** {res.get('market_view', '')}")
-                    st.markdown("#### 🎯 구체적 액션 플랜")
-                    for i in res.get("action_plan", []): 
-                        if "매수" in i['action']: st.success(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                        elif "매도" in i['action']: st.error(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                        else: st.warning(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                    st.markdown(f"> **💡 펀드매니저 조언:** {res.get('final_advice', '')}")
-                except Exception as e: st.error(f"오류: {e}")
+        # 💡 [핵심 복구] 펀드매니저 AI 리밸런싱 및 오늘의 모닝 브리핑 생성 버튼 나란히 배치
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            if st.button("✨ 펀드매니저 AI 리밸런싱 (자산 배분 지시서)", use_container_width=True):
+                if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
+                with st.spinner("계좌 자금 흐름과 종목간 상관관계를 분석 중입니다..."):
+                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
+                    rebalance_prompt = f"""
+                    당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
+                    아래 [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
+                    - 총 자산: {int(total_asset_value):,}원 / 보유 예수금: {int(remaining_cash):,}원
+                    - 현재 보유 종목:\n{txt}
+                    출력 형식 (JSON): {{ "market_view": "브리핑 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "이유" }} ], "final_advice": "최종 조언" }}
+                    """
+                    try:
+                        res = get_ai_analysis(rebalance_prompt, gemini_api_key)
+                        st.success("✅ AI 리밸런싱 지시서가 도착했습니다.")
+                        st.info(f"**📊 포트폴리오 진단:** {res.get('market_view', '')}")
+                        st.markdown("#### 🎯 구체적 액션 플랜")
+                        for i in res.get("action_plan", []): 
+                            if "매수" in i['action']: st.success(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
+                            elif "매도" in i['action']: st.error(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
+                            else: st.warning(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
+                        st.markdown(f"> **💡 펀드매니저 조언:** {res.get('final_advice', '')}")
+                    except Exception as e: st.error(f"오류: {e}")
+                    
+        with btn_c2:
+            if st.button("🌅 오늘의 모닝 브리핑 생성", type="primary", use_container_width=True):
+                if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
+                with st.spinner("거시경제 및 시장 동향 분석 중..."):
+                    try:
+                        market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
+                        txt = "\n".join([f"- {r['종목명']} 수익률: {r['수익률(%)']:.2f}%" for _, r in dis_df.iterrows()])
+                        briefing_prompt = f"글로벌 퀀트 전략가로서 모닝 브리핑을 JSON으로 작성하세요. 성향: {st.session_state.invest_style}\n[시장]\n{market_news}\n[포트폴리오]\n{txt}\n[형식]\n{{\"market_overview\":\"시장요약(3문장)\",\"stock_briefings\":[{{\"stock\":\"명\",\"alert_level\":\"🟢 안전/🟡 주의/🔴 위험\",\"strategy\":\"전략(2문장)\"}}],\"action_plan\":\"성향이 반영된 핵심 지침(1문장)\"}}"
+                        res = get_ai_analysis(briefing_prompt, gemini_api_key)
+                        
+                        st.success("✅ 굿모닝! 오늘의 브리핑이 도착했습니다.")
+                        st.markdown("### 🌐 밤사이 시장 동향"); st.info(res.get("market_overview", ""))
+                        st.markdown("### 🎯 맞춤 대응 전략")
+                        for stock in res.get("stock_briefings", []):
+                            lvl = stock.get("alert_level", "")
+                            if "안전" in lvl: st.success(f"**{stock['stock']}** ({lvl}) : {stock.get('strategy', '')}")
+                            elif "위험" in lvl: st.error(f"**{stock['stock']}** ({lvl}) : {stock.get('strategy', '')}")
+                            else: st.warning(f"**{stock['stock']}** ({lvl}) : {stock.get('strategy', '')}")
+                        st.markdown(f"> **💡 핵심 지침:** {res.get('action_plan', '')}")
+                        
+                        if tele_token and tele_chat_id:
+                            briefing_msg = f"🌅 <b>모닝 브리핑</b>\n\n🌐 <b>시장 동향</b>\n{res.get('market_overview', '')}\n\n🎯 <b>대응 전략</b>\n"
+                            for stock in res.get("stock_briefings", []): briefing_msg += f"- <b>{stock['stock']}</b>: {stock.get('strategy', '')}\n"
+                            briefing_msg += f"\n💡 <b>지침({st.session_state.invest_style}):</b> {res.get('action_plan', '')}"
+                            send_telegram_message(tele_token, tele_chat_id, briefing_msg)
+                            st.toast("📱 텔레그램 전송 완료!")
+                    except Exception as e: st.error(f"오류: {e}")
 
 # -----------------------------------------------------
-# [탭 3] 매수 급소 스크리너 (통화 삭제 및 세부조건 분해 완벽 적용)
+# [탭 3] 매수 급소 스크리너 (통화 삭제 및 세부조건 분해 유지)
 # -----------------------------------------------------
 with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
@@ -507,7 +569,6 @@ with tab3:
                             tar_p = p + (a*4); stop_p = p - (a*2); entry2 = float(ind['EMA15'])
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
-                            # 💡 [업그레이드] 세부 합격 여부 분해
                             rule_str = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in ind["Cloud_Rules"].items()])
                             
                             res.append({
@@ -527,7 +588,6 @@ with tab3:
             txt.text("✅ 스캔 완료!")
             
             if res:
-                # 💡 [업그레이드] 불필요했던 "통화", "통과" 열 삭제 및 세부조건 적용
                 df_res = pd.DataFrame(res)
                 st.dataframe(df_res, use_container_width=True, hide_index=True)
                 st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv")
@@ -535,7 +595,6 @@ with tab3:
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []; msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개 종목 발견\n\n"
                     for r in res:
-                        # 💡 [복구] 한국 주식은 '원', 미국 주식은 달러 '$' 표시 분리
                         is_krw = str(sl.get(r['종목명'], "A")).isdigit()
                         if is_krw:
                             curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
