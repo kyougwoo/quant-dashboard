@@ -116,7 +116,7 @@ def send_telegram_message(token, chat_id, text):
     try: return requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
     except: return False
 
-# 💡 [업그레이드] 포트폴리오 데이터 구조 변경 (현금 및 실현손익 추가)
+# 💡 [핵심 복구] 가계부용 포트폴리오 데이터 구조 로드
 def load_portfolio():
     default_data = {'initial_capital': 0, 'realized_profit': 0, 'stocks': []}
     if db:
@@ -124,7 +124,6 @@ def load_portfolio():
             doc = db.collection('portfolios').document(st.session_state.user_id).get()
             if doc.exists:
                 data = doc.to_dict()
-                # 과거 버전(주식 리스트만 있는 경우) 마이그레이션
                 if 'stocks' in data and 'initial_capital' not in data:
                     return {'initial_capital': 0, 'realized_profit': 0, 'stocks': data['stocks']}
                 return data
@@ -134,14 +133,6 @@ def load_portfolio():
     if os.path.exists(file_name):
         try:
             with open(file_name, 'r') as f: return json.load(f)
-        except: pass
-    
-    # 완전 옛날 CSV 파일 마이그레이션
-    old_csv = f'portfolio_data_{st.session_state.user_id}.csv'
-    if os.path.exists(old_csv):
-        try:
-            old_df = pd.read_csv(old_csv)
-            return {'initial_capital': 0, 'realized_profit': 0, 'stocks': old_df.to_dict('records')}
         except: pass
         
     return default_data
@@ -299,7 +290,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 tab1, tab2, tab3 = st.tabs(["📊 차트 & 타점 분석", "💼 현금 트래킹 및 AI 리밸런싱", "🔍 매수 급소 스크리너"])
 
 # -----------------------------------------------------
-# [탭 1] 차트 분석
+# [탭 1] 차트 & 타점 분석
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -362,7 +353,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# 💡 [핵심 업그레이드] 탭 2: 현금 트래킹 및 AI 리밸런싱
+# 💡 [완벽 복구] 탭 2: 현금 트래킹 및 AI 리밸런싱
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -449,7 +440,6 @@ with tab2:
         st.markdown("<br>### 📋 현재 보유 종목", unsafe_allow_html=True)
         st.dataframe(dis_df[['종목명', '매수단가', '수량', '현재가', '수익금', '수익률(%)']].style.format({'매수단가': '{:,.0f}', '현재가': '{:,.0f}', '수익금': '{:,.0f}', '수익률(%)': '{:.2f}%'}), use_container_width=True, hide_index=True)
         
-        # 💡 [핵심 업그레이드] 펀드매니저 AI 리밸런싱
         st.markdown("---")
         if st.button("✨ 펀드매니저 AI 리밸런싱 (자산 배분 지시서)", use_container_width=True):
             if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
@@ -457,47 +447,35 @@ with tab2:
                 txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
                 
                 rebalance_prompt = f"""
-                당신은 월스트리트 최고 수준의 자산운용 펀드매니저입니다. 고객의 투자 성향은 '{st.session_state.invest_style}'입니다.
-                아래 고객의 [전체 자산 현황]과 [보유 종목 현황]을 분석하여, 정확한 수치 기반의 '리밸런싱(비중 조절) 매매 지시서'를 JSON 형태로 작성해 주세요.
+                당신은 자산운용 펀드매니저입니다. 고객의 투자 성향은 '{st.session_state.invest_style}'입니다.
+                아래 [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
 
                 [계좌 자산 현황]
                 - 총 자산: {int(total_asset_value):,}원
                 - 현재 보유 예수금(현금): {int(remaining_cash):,}원 (비중: {remaining_cash/total_asset_value*100:.1f}%)
-                - 누적 실현손익: {int(p_data['realized_profit']):,}원
 
                 [현재 보유 종목]
                 {txt}
 
                 [분석 수칙]
-                1. 현금 비중이 10% 미만이면 위험 상태로 간주하고, 수익 중인 종목을 일부 매도(익절)하여 현금을 확보하라고 지시하세요.
-                2. 종목들이 특정 섹터(예: 반도체)에 몰려있어 상관관계가 너무 높다면, 헷징을 위해 현금으로 다른 섹터 방어주 편입을 지시하세요.
-                3. 성향에 따라 공격적이면 주식 비중을 높이고, 보수적이면 현금 비중을 높이라고 조언하세요.
-
-                [출력 형식 (JSON)]
-                {{ 
-                  "market_view": "현재 포트폴리오 방어력 및 섹터 쏠림에 대한 브리핑 (2문장)", 
-                  "action_plan": [ 
-                    {{ "stock": "종목명 또는 '현금/인버스'", "action": "매수 / 일부매도 / 전량매도 / 유지", "reason": "정확한 수치(%)나 현금 확보 목적을 포함한 이유" }} 
-                  ],
-                  "final_advice": "펀드매니저의 최종 자산 관리 조언"
-                }}
+                1. 현금 비중이 10% 미만이면 위험 상태로 간주, 수익 중인 종목 매도를 통해 현금 확보 지시.
+                2. 종목들이 특정 섹터에 몰려있다면 헷징을 위해 방어주 편입 지시.
+                3. 출력 형식 (JSON): {{ "market_view": "브리핑 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "이유" }} ], "final_advice": "최종 조언" }}
                 """
                 try:
                     res = get_ai_analysis(rebalance_prompt, gemini_api_key)
                     st.success("✅ AI 리밸런싱 지시서가 도착했습니다.")
                     st.info(f"**📊 포트폴리오 진단:** {res.get('market_view', '')}")
-                    
                     st.markdown("#### 🎯 구체적 액션 플랜")
                     for i in res.get("action_plan", []): 
                         if "매수" in i['action']: st.success(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
                         elif "매도" in i['action']: st.error(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
                         else: st.warning(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                    
                     st.markdown(f"> **💡 펀드매니저 조언:** {res.get('final_advice', '')}")
                 except Exception as e: st.error(f"오류: {e}")
 
 # -----------------------------------------------------
-# [탭 3] VIP 검색기 (변동 없음)
+# [탭 3] 매수 급소 스크리너 (통화 삭제 및 세부조건 분해 완벽 적용)
 # -----------------------------------------------------
 with tab3:
     st.subheader("🔍 매수 급소 AI 스크리너")
@@ -528,28 +506,50 @@ with tab3:
                             p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
                             tar_p = p + (a*4); stop_p = p - (a*2); entry2 = float(ind['EMA15'])
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
+                            
+                            # 💡 [업그레이드] 세부 합격 여부 분해
                             rule_str = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in ind["Cloud_Rules"].items()])
                             
                             res.append({
-                                "종목명": n, "시그널": "🔥 강력" if sc==4 else "👍 분할", "클라우드 세부조건": rule_str, 
-                                "현재가": p, "2차타점": entry2, "목표가": tar_p, "손절가": stop_p, "손익비": rr_2,
-                                "RSI": ind['RSI'], "MACD": "골든크로스" if is_macd_bullish else "데드크로스"
+                                "종목명": n, 
+                                "시그널": "🔥 강력" if sc==4 else "👍 분할", 
+                                "클라우드 세부조건": rule_str, 
+                                "현재가": p, 
+                                "2차타점": entry2, 
+                                "목표가": tar_p, 
+                                "손절가": stop_p, 
+                                "손익비": rr_2,
+                                "RSI": ind['RSI'],
+                                "MACD": "골든크로스" if is_macd_bullish else "데드크로스"
                             })
                 except: pass
                 bar.progress((i+1)/len(sl))
             txt.text("✅ 스캔 완료!")
             
             if res:
+                # 💡 [업그레이드] 불필요했던 "통화", "통과" 열 삭제 및 세부조건 적용
                 df_res = pd.DataFrame(res)
                 st.dataframe(df_res, use_container_width=True, hide_index=True)
+                st.download_button("📥 CSV 다운로드", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant.csv", mime="text/csv")
+                
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []; msg = f"🚀 <b>클라우드 퀀트 스캔 완료</b>\n\n총 {len(res)}개 종목 발견\n\n"
                     for r in res:
+                        # 💡 [복구] 한국 주식은 '원', 미국 주식은 달러 '$' 표시 분리
                         is_krw = str(sl.get(r['종목명'], "A")).isdigit()
-                        if is_krw: curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
-                        else: curr_p = f"${r['현재가']:,.2f}"; tar_p = f"${r['목표가']:,.2f}"; stop_p = f"${r['손절가']:,.2f}"; entry2_p = f"${r['2차타점']:,.2f}"
+                        if is_krw:
+                            curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
+                        else:
+                            curr_p = f"${r['현재가']:,.2f}"; tar_p = f"${r['목표가']:,.2f}"; stop_p = f"${r['손절가']:,.2f}"; entry2_p = f"${r['2차타점']:,.2f}"
 
-                        info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n └ ☁️ <b>조건:</b> {r['클라우드 세부조건']}\n └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']}\n └ 🎯 <b>매수:</b> 1차 {curr_p} / 2차 {entry2_p}\n └ 🎯 <b>목표:</b> {tar_p}\n └ 🛡️ <b>손절:</b> {stop_p}\n └ ⚖️ <b>손익비:</b> 2차 진입시 {r['손익비']:.1f}배\n\n"
+                        info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n"
+                        info += f" └ ☁️ <b>조건:</b> {r['클라우드 세부조건']}\n"
+                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']}\n"
+                        info += f" └ 🎯 <b>매수:</b> 1차 {curr_p} / 2차 {entry2_p}\n"
+                        info += f" └ 🎯 <b>목표:</b> {tar_p}\n"
+                        info += f" └ 🛡️ <b>손절:</b> {stop_p}\n"
+                        info += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['손익비']:.1f}배 극대화\n\n"
+                        
                         if len(msg) + len(info) > 3800: chunks.append(msg); msg = info
                         else: msg += info
                     chunks.append(msg)
