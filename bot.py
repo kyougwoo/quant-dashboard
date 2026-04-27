@@ -42,6 +42,13 @@ def calculate_cloud_indicators(df):
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
+    # 💡 [볼린저밴드 연산 추가]
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
+    df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
+    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
+    
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
     loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
@@ -63,9 +70,13 @@ def calculate_cloud_indicators(df):
     except: monthly_close = df['Close'].resample('M').last()
     current_monthly_ema10 = float(monthly_close.ewm(span=10, adjust=False).mean().iloc[-1])
     
+    # 💡 [볼린저밴드 스퀴즈 판별]
+    is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
+    
     indicators = {
         "EMA15": float(latest['EMA15']),
         "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
+        "BB_Is_Squeeze": is_squeeze,
         "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
         "RSI": float(latest['RSI']),
         "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
@@ -195,7 +206,8 @@ def run_afternoon_screener():
                         "stop": stop_p,
                         "rr_2": rr_2,
                         "rsi": ind['RSI'],
-                        "macd": "골든크로스" if is_macd_bullish else "데드크로스"
+                        "macd": "골든크로스" if is_macd_bullish else "데드크로스",
+                        "bb_stat": "📉스퀴즈(응축)" if ind.get("BB_Is_Squeeze") else "확장"
                     })
             time.sleep(0.5)
         except: pass
@@ -208,7 +220,7 @@ def run_afternoon_screener():
         
         msg += f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
         msg += f" └ ☁️ <b>조건:</b> {rule_details}\n"
-        msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']}\n"
+        msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {r['bb_stat']}\n"
         msg += f" └ 🎯 <b>매수:</b> 1차 {int(r['price']):,}원 / 2차 {int(r['entry2']):,}원\n"
         msg += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
         msg += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
