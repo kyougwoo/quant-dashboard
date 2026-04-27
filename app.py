@@ -381,16 +381,15 @@ with tab1:
                 prompt = f"""
                 당신은 'Harness 4-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다. 성향: {st.session_state.invest_style}
                 종목: {actual_name}, 뉴스: {get_recent_news(actual_name)[:3]}, 월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험'}
-                RSI: {tech_ind['RSI']:.1f}, MACD: {'골든크로스' if tech_ind['MACD_Cross'] else '데드크로스'}, 볼린저밴드: {'스퀴즈(응축, 시세분출 전야)' if tech_ind.get('BB_Is_Squeeze') else '일반 확장'}, 손절가: {format_price(stop_p, ticker)}
-                RSI 70 이상 및 MACD 데드크로스 시 강력 매도 권고. 볼린저밴드가 스퀴즈 상태라면 상방 이탈 에너지가 강한지 점검할 것.
-                출력 형식(JSON): {{"macroAgent": {{"score": 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
+                RSI: {tech_ind['RSI']:.1f}, MACD: {'골든크로스' if tech_ind['MACD_Cross'] else '데드크로스'}, 손절가: {format_price(stop_p, ticker)}
+                RSI 70 이상 및 MACD 데드크로스 시 강력 매도 권고. 출력 형식(JSON): {{"macroAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
                 """
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
                     st.success("✅ 4-Agent 분석 완료!")
-                    st.markdown(f"#### 🌍 Agent 1: 거시경제 분석가 (Score: {res['macroAgent']['score']}/10)"); st.info(res['macroAgent']['reasoning'])
-                    st.markdown(f"#### 📈 Agent 2: 기술적 분석가 (Score: {res['technicalAgent']['score']}/10)"); st.success(res['technicalAgent']['reasoning'])
-                    st.markdown(f"#### 📰 Agent 3: 기본적 분석가 (Score: {res['fundamentalAgent']['score']}/10)"); st.warning(res['fundamentalAgent']['reasoning'])
+                    st.markdown(f"#### 🌍 Agent 1: 거시경제 분석가 (Score: {res['macroAgent']['score']}/100)"); st.info(res['macroAgent']['reasoning'])
+                    st.markdown(f"#### 📈 Agent 2: 기술적 분석가 (Score: {res['technicalAgent']['score']}/100)"); st.success(res['technicalAgent']['reasoning'])
+                    st.markdown(f"#### 📰 Agent 3: 기본적 분석가 (Score: {res['fundamentalAgent']['score']}/100)"); st.warning(res['fundamentalAgent']['reasoning'])
                     st.markdown("#### 🛡️ Agent 4: 리스크 관리자 (최종 판단)"); st.error(res['riskManager']['reasoning'])
                 except Exception as e: st.error(f"분석 오류: {e}")
 
@@ -507,14 +506,26 @@ with tab2:
         with btn_c1:
             if st.button("✨ 펀드매니저 AI 리밸런싱 (자산 배분 지시서)", use_container_width=True):
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
-                with st.spinner("계좌 자금 흐름과 종목간 상관관계를 분석 중입니다..."):
+                with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
+                    # 💡 [업그레이드] 실시간 뉴스 시황 데이터 수집 추가!
+                    market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
                     txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
+                    
                     rebalance_prompt = f"""
                     당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
-                    아래 [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
+                    아래 [오늘의 실시간 시황], [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
+                    
+                    [오늘의 실시간 시황 뉴스]
+                    {market_news}
+
+                    [계좌 자산 현황]
                     - 총 자산: {int(total_asset_value):,}원 / 보유 예수금: {int(remaining_cash):,}원
                     - 현재 보유 종목:\n{txt}
-                    출력 형식 (JSON): {{ "market_view": "브리핑 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "이유" }} ], "final_advice": "최종 조언" }}
+                    
+                    [분석 수칙]
+                    1. '오늘의 실시간 시황 뉴스'를 반드시 반영하여 거시경제 상황에 맞는 액션을 취하세요. (예: 악재 뉴스면 현금 확보)
+                    2. 현금 비중이 10% 미만이면 위험 상태로 간주, 수익 중인 종목 매도를 통해 현금 확보 지시.
+                    3. 출력 형식 (JSON): {{ "market_view": "시황이 반영된 포트폴리오 진단 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "시황 및 데이터를 근거로 한 이유" }} ], "final_advice": "최종 조언" }}
                     """
                     try:
                         res = get_ai_analysis(rebalance_prompt, gemini_api_key)
