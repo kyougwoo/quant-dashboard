@@ -217,6 +217,13 @@ def calculate_cloud_indicators(df):
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
+    # 💡 [볼린저밴드 연산 추가] 20일선 기준 상하단 및 밴드폭(스퀴즈 판별용) 계산
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
+    df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
+    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
+    
     delta = df['Close'].diff()
     df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
     df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
@@ -229,8 +236,13 @@ def calculate_cloud_indicators(df):
     except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
     
     latest, prev = df.iloc[-1], df.iloc[-2]
+    
+    # 💡 [볼린저밴드 스퀴즈 판별] 최근 20일 평균 폭보다 20% 이상 응축되었는지 확인
+    is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
+    
     indicators = {
         "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
+        "BB_Upper": float(latest['BB_Upper']) if not pd.isna(latest['BB_Upper']) else 0.0, "BB_Lower": float(latest['BB_Lower']) if not pd.isna(latest['BB_Lower']) else 0.0, "BB_Is_Squeeze": is_squeeze,
         "Monthly_EMA10": current_monthly_ema10, "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
         "RSI": float(latest['RSI']), "MACD": float(latest['MACD']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
         "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
@@ -296,10 +308,16 @@ with tab1:
     if df is not None and not df.empty:
         display_df = df.tail(120) 
         fig = go.Figure()
+        
+        # 💡 [차트에 볼린저밴드 배경 추가] 캔들스틱보다 뒤에 그려지도록 먼저 추가
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(14, 165, 233, 0.4)', width=1), name='BB 상단'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(14, 165, 233, 0.4)', width=1), fill='tonexty', fillcolor='rgba(14, 165, 233, 0.1)', name='BB 하단'))
+        
         fig.add_trace(go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가", increasing_line_color='#ef4444', decreasing_line_color='#3b82f6'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#8b5cf6', width=1.5), name='5일선'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#f59e0b', width=1.5), name='15일선'))
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'))
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#ef4444', width=2, dash='dash'), name='최대 매물대(60일)'))
         
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]; b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]; s_y = [sell_m['y'][i] for i, x in enumerate(sell_m['x']) if x >= display_df.index[0]]
@@ -334,7 +352,8 @@ with tab1:
                 rsi_val = tech_ind.get('RSI', 50)
                 rsi_sig = "🔥과열" if rsi_val >= 70 else "❄️침체" if rsi_val <= 30 else "보통"
                 macd_cross = "🟢골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴데드크로스(매도)"
-                st.info(f"**RSI (14):** {rsi_val:.1f} ({rsi_sig})  |  **MACD:** {macd_cross}")
+                bb_sig = "📉스퀴즈(응축, 시세분출 전야)" if tech_ind.get('BB_Is_Squeeze') else "📈일반 확장"
+                st.info(f"**RSI (14):** {rsi_val:.1f} ({rsi_sig})  |  **MACD:** {macd_cross}\n\n**볼린저밴드:** {bb_sig}")
                 st.markdown("**📅 월봉 10선 추세**")
                 if tech_ind.get('Is_Above_Monthly_EMA10'): st.success(f"🟢 안전 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 돌파)")
                 else: st.error(f"🔴 위험 ({format_price(tech_ind.get('Monthly_EMA10', 0), ticker)} 이탈)")
@@ -362,8 +381,9 @@ with tab1:
                 prompt = f"""
                 당신은 'Harness 4-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다. 성향: {st.session_state.invest_style}
                 종목: {actual_name}, 뉴스: {get_recent_news(actual_name)[:3]}, 월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험'}
-                RSI: {tech_ind['RSI']:.1f}, MACD: {'골든크로스' if tech_ind['MACD_Cross'] else '데드크로스'}, 손절가: {format_price(stop_p, ticker)}
-                RSI 70 이상 및 MACD 데드크로스 시 강력 매도 권고. 출력 형식(JSON): {{"macroAgent": {{"score": 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
+                RSI: {tech_ind['RSI']:.1f}, MACD: {'골든크로스' if tech_ind['MACD_Cross'] else '데드크로스'}, 볼린저밴드: {'스퀴즈(응축, 시세분출 전야)' if tech_ind.get('BB_Is_Squeeze') else '일반 확장'}, 손절가: {format_price(stop_p, ticker)}
+                RSI 70 이상 및 MACD 데드크로스 시 강력 매도 권고. 볼린저밴드가 스퀴즈 상태라면 상방 이탈 에너지가 강한지 점검할 것.
+                출력 형식(JSON): {{"macroAgent": {{"score": 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
                 """
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
@@ -570,6 +590,7 @@ with tab3:
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
                             rule_str = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in ind["Cloud_Rules"].items()])
+                            bb_stat = "📉스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
                             
                             res.append({
                                 "종목명": n, 
@@ -581,7 +602,8 @@ with tab3:
                                 "손절가": stop_p, 
                                 "손익비": rr_2,
                                 "RSI": ind['RSI'],
-                                "MACD": "골든크로스" if is_macd_bullish else "데드크로스"
+                                "MACD": "골든크로스" if is_macd_bullish else "데드크로스",
+                                "BB상태": bb_stat
                             })
                 except: pass
                 bar.progress((i+1)/len(sl))
@@ -603,7 +625,7 @@ with tab3:
 
                         info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n"
                         info += f" └ ☁️ <b>조건:</b> {r['클라우드 세부조건']}\n"
-                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']}\n"
+                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']} | <b>BB:</b> {r['BB상태']}\n"
                         info += f" └ 🎯 <b>매수:</b> 1차 {curr_p} / 2차 {entry2_p}\n"
                         info += f" └ 🎯 <b>목표:</b> {tar_p}\n"
                         info += f" └ 🛡️ <b>손절:</b> {stop_p}\n"
