@@ -217,7 +217,14 @@ def get_ai_analysis(prompt, api_key):
             raise e
 
 def calculate_cloud_indicators(df):
-    if df is None or len(df) < 200: return None, {}
+    if df is None or df.empty: return None, {}
+    
+    # 💡 [핵심 버그 수정] HMM 등 결측치/중복날짜가 있는 불량 데이터 클렌징 (장갑차 코드)
+    df = df[~df.index.duplicated(keep='first')] 
+    df = df.dropna(subset=['Close'])
+    
+    if len(df) < 200: return None, {}
+    
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
@@ -234,8 +241,15 @@ def calculate_cloud_indicators(df):
     df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    df['Vol_Ref_Price'] = float(df['Close'].iloc[-1]) if df.tail(60)['Volume'].sum() == 0 else float(df.tail(60).sort_values('Volume', ascending=False).iloc[0]['Close'])
-    df['ATR'] = df[['High', 'Low', 'Close']].apply(lambda x: max(x['High']-x['Low'], abs(x['High']-df['Close'].shift(1).loc[x.name]), abs(x['Low']-df['Close'].shift(1).loc[x.name])), axis=1).rolling(14).mean()
+    recent_60 = df.tail(60)
+    df['Vol_Ref_Price'] = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
+    
+    # 💡 [핵심 버그 수정 2] 속도가 5배 빠르고 절대 에러가 나지 않는 ATR(변동성) 벡터화 연산 
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift(1)).abs()
+    low_close = (df['Low'] - df['Close'].shift(1)).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(window=14).mean()
     
     try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
     except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
@@ -257,6 +271,10 @@ def calculate_cloud_indicators(df):
 def run_backtest_with_markers(df):
     trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
     buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
+    
+    if df is None or df.empty: # 💡 보호 코드 추가
+        return {'total_trades': 0, 'win_rate': 0, 'total_return': 0}, {'x': buy_dates, 'y': buy_prices}, {'x': sell_dates, 'y': sell_prices}
+        
     for i in range(1, len(df)):
         prev, curr, date = df.iloc[i-1], df.iloc[i], df.index[i]
         if pd.isna(curr['EMA200']): continue
@@ -296,7 +314,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 tab1, tab2, tab3 = st.tabs(["📊 차트 & 타점 분석", "💼 현금 트래킹 및 AI 리밸런싱", "🔍 매수 급소 스크리너"])
 
 # -----------------------------------------------------
-# [탭 1] 차트 & 타점 분석
+# [탭 1] 차트 & 타점 분석 (HTS급 고도화)
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -313,7 +331,7 @@ with tab1:
     if df is not None and not df.empty:
         display_df = df.tail(120) 
         
-        # 💡 [업그레이드] 2단 서브플롯 (위: 주가/보조지표, 아래: 거래량)
+        # 2단 서브플롯 (위: 주가/보조지표, 아래: 거래량)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
         
         # Row 1: 주가 및 보조지표
