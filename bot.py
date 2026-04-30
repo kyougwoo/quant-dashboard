@@ -8,14 +8,13 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 import textwrap
 
-# --- 1. 환경 변수 (GitHub Secrets에서 가져옴) ---
+# --- 1. 환경 변수 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
 USER_ID = os.environ.get("USER_ID", "vip")
 
-# 💡 텔레그램 전송 함수
 def send_telegram(text):
     print("▶️ 텔레그램 전송 시도 중...")
     base_url = "https://" + "api.telegram.org/bot"
@@ -26,7 +25,6 @@ def send_telegram(text):
         else: print("✅ 텔레그램 메시지 발송 완료!")
     except Exception as e: print(f"🚨 네트워크 오류: {e}")
 
-# --- 2. 보조 함수 (지표 계산, AI 분석) ---
 def get_recent_news(keyword):
     try:
         base_url = "https://" + "news.google.com/rss/search?q="
@@ -37,12 +35,18 @@ def get_recent_news(keyword):
     except: return []
 
 def calculate_cloud_indicators(df):
-    if df is None or len(df) < 200: return None, None
+    if df is None or df.empty: return None, {}
+    
+    # 💡 [에러 방지] 캔버스(app.py)에 적용했던 데이터 정수기 로직 추가
+    df = df[~df.index.duplicated(keep='first')] 
+    df = df.dropna(subset=['Close'])
+    
+    if len(df) < 200: return None, {}
+    
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    # 💡 [볼린저밴드 연산 추가]
     df['BB_Mid'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
@@ -60,17 +64,18 @@ def calculate_cloud_indicators(df):
     recent_60 = df.tail(60)
     vol_ref_price = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
     
-    df['H-L'] = df['High'] - df['Low']
-    df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
-    df['L-PC'] = abs(df['Low'] - df['Close'].shift(1))
-    df['ATR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1).rolling(window=14).mean()
+    # 💡 [에러 방지] ATR 벡터화 연산 도입
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift(1)).abs()
+    low_close = (df['Low'] - df['Close'].shift(1)).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(window=14).mean()
     
-    latest = df.iloc[-1]; prev = df.iloc[-2]
+    latest, prev = df.iloc[-1], df.iloc[-2]
     try: monthly_close = df['Close'].resample('ME').last()
     except: monthly_close = df['Close'].resample('M').last()
     current_monthly_ema10 = float(monthly_close.ewm(span=10, adjust=False).mean().iloc[-1])
     
-    # 💡 [볼린저밴드 스퀴즈 판별]
     is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
     
     indicators = {
@@ -87,7 +92,7 @@ def calculate_cloud_indicators(df):
             "최대 거래량 종가 돌파": bool(latest['Close'] > vol_ref_price)
         }
     }
-    return latest['Close'], indicators
+    return df, indicators
 
 def get_ai_analysis(prompt):
     genai.configure(api_key=GEMINI_API_KEY)
@@ -95,7 +100,7 @@ def get_ai_analysis(prompt):
     res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
     return json.loads(res.text.replace("```json", "").replace("```", "").strip())
 
-# --- 3. 핵심 로직: 모닝 브리핑 (아침) ---
+# --- 3. 아침 모닝 브리핑 ---
 def run_morning_briefing():
     print("🌅 [모닝 브리핑 스케줄러 기동 시작]")
     import re
@@ -121,7 +126,6 @@ def run_morning_briefing():
     
     portfolio_context = ""
     portfolio_info_list = []
-    
     ticker_map = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "기아":"000270", "LG에너지솔루션":"373220"}
     
     for s in stocks:
@@ -134,8 +138,9 @@ def run_morning_briefing():
             except: continue
             
         df = fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-        price, ind = calculate_cloud_indicators(df)
+        df, ind = calculate_cloud_indicators(df)
         if ind:
+            price = float(df['Close'].iloc[-1])
             prof = (price - s['매수단가']) / s['매수단가'] * 100 if s['매수단가'] > 0 else 0
             stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, RSI={ind.get('RSI'):.1f}, MACD={'골든크로스' if ind.get('MACD_Cross') else '데드크로스'}"
             portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
@@ -172,24 +177,24 @@ def run_morning_briefing():
     send_telegram(msg)
     print("✅ 모닝 브리핑 루틴 완료")
 
-# --- 4. 핵심 로직: 오후 스크리너 (오후 4시) ---
+# --- 4. 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
     print("🔍 [오후 타점 스크리너 기동 시작]")
-    send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 중 '스퀴즈(응축)' 상태인 종목만 필터링 스캔을 시작합니다.")
     sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
     
     res_list = []
     for n, c in sl.items():
         try:
             df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-            p, ind = calculate_cloud_indicators(df)
+            df, ind = calculate_cloud_indicators(df)
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                 is_macd_bullish = ind['MACD_Cross']
                 is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
                 
-                # 💡 [핵심] 스퀴즈 상태인 종목만 통과시키도록 엄격한 필터링 추가!
-                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good and ind.get("BB_Is_Squeeze"):
+                # 💡 [필터 완화] 스퀴즈가 아니어도 조건 맞으면 보냅니다!
+                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
+                    p = float(df['Close'].iloc[-1])
                     a = float(ind['ATR'])
                     tar_p = p + (a * 4)
                     stop_p = p - (a * 2)
@@ -208,31 +213,34 @@ def run_afternoon_screener():
                         "rr_2": rr_2,
                         "rsi": ind['RSI'],
                         "macd": "골든크로스" if is_macd_bullish else "데드크로스",
-                        "bb_stat": "📉스퀴즈(응축)"
+                        "is_squeeze": ind.get("BB_Is_Squeeze", False)
                     })
             time.sleep(0.5)
         except: pass
         
-    res_list.sort(key=lambda x: x['score'], reverse=True)
+    # 스퀴즈 종목이 맨 위로 오도록 정렬
+    res_list.sort(key=lambda x: (x['is_squeeze'], x['score']), reverse=True)
     
-    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n🎯 <b>스퀴즈(응축) 발생 종목만 엄선했습니다.</b>\n총 {len(res_list)}개 타점 종목 발견!\n\n"
+    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
         rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
         
+        # 💡 [강조 표시] 스퀴즈인 녀석은 눈에 확 띄게!
+        bb_stat = "🚨스퀴즈(응축 폭발전야!)🚨" if r['is_squeeze'] else "확장"
+        
         msg += f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
         msg += f" └ ☁️ <b>조건:</b> {rule_details}\n"
-        msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {r['bb_stat']}\n"
+        msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {bb_stat}\n"
         msg += f" └ 🎯 <b>매수:</b> 1차 {int(r['price']):,}원 / 2차 {int(r['entry2']):,}원\n"
         msg += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
         msg += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
         msg += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['rr_2']:.1f}배 극대화\n\n"
         
-    if not res_list: msg += "월봉 10선 위 안전하며 '스퀴즈' 상태인 특급 매수 타점 종목이 오늘은 없습니다."
+    if not res_list: msg += "월봉 10선 위 안전하며 매수 조건에 맞는 종목이 오늘은 없습니다."
     
     send_telegram(msg)
     print("✅ 스크리너 루틴 완료")
 
-# --- 5. 실행 제어 (명령어에 따라 구분) ---
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "afternoon"
     print(f"🚀 봇 실행 모드: {mode}")
