@@ -115,7 +115,6 @@ def run_morning_briefing():
         send_telegram("⚠️ 등록된 포트폴리오가 없습니다.")
         return
     
-    # 💡 [업그레이드] 현금 추적 데이터 구조 호환되도록 가져오기
     doc_data = doc.to_dict()
     stocks = doc_data.get('stocks', []) if 'stocks' in doc_data else (doc_data if isinstance(doc_data, list) else [])
     realized_profit = doc_data.get('realized_profit', 0) if isinstance(doc_data, dict) else 0
@@ -176,19 +175,21 @@ def run_morning_briefing():
 # --- 4. 핵심 로직: 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
     print("🔍 [오후 타점 스크리너 기동 시작]")
-    send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 스캔을 시작합니다.")
+    send_telegram("🔍 <b>[오후 타점 스크리너 기동 중...]</b>\n한국 우량주 중 '스퀴즈(응축)' 상태인 종목만 필터링 스캔을 시작합니다.")
     sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
     
     res_list = []
     for n, c in sl.items():
         try:
-            p, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+            df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+            p, ind = calculate_cloud_indicators(df)
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                 is_macd_bullish = ind['MACD_Cross']
                 is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
                 
-                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
+                # 💡 [핵심] 스퀴즈 상태인 종목만 통과시키도록 엄격한 필터링 추가!
+                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good and ind.get("BB_Is_Squeeze"):
                     a = float(ind['ATR'])
                     tar_p = p + (a * 4)
                     stop_p = p - (a * 2)
@@ -207,14 +208,14 @@ def run_afternoon_screener():
                         "rr_2": rr_2,
                         "rsi": ind['RSI'],
                         "macd": "골든크로스" if is_macd_bullish else "데드크로스",
-                        "bb_stat": "📉스퀴즈(응축)" if ind.get("BB_Is_Squeeze") else "확장"
+                        "bb_stat": "📉스퀴즈(응축)"
                     })
             time.sleep(0.5)
         except: pass
         
     res_list.sort(key=lambda x: x['score'], reverse=True)
     
-    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
+    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n🎯 <b>스퀴즈(응축) 발생 종목만 엄선했습니다.</b>\n총 {len(res_list)}개 타점 종목 발견!\n\n"
     for r in res_list: 
         rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
         
@@ -226,7 +227,7 @@ def run_afternoon_screener():
         msg += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
         msg += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['rr_2']:.1f}배 극대화\n\n"
         
-    if not res_list: msg += "월봉 10선 및 RSI/MACD 기준 안전한 매수 타점 종목이 없습니다."
+    if not res_list: msg += "월봉 10선 위 안전하며 '스퀴즈' 상태인 특급 매수 타점 종목이 오늘은 없습니다."
     
     send_telegram(msg)
     print("✅ 스크리너 루틴 완료")
