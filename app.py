@@ -147,30 +147,23 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 [핵심 버그 수정] 검색 엔진 지능 고도화 (HMM, NAVER 등 영문 한국주식 찾기 오류 완벽 해결)
 @st.cache_data(ttl=86400)
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
     
     try:
-        # 1. 무조건 한국 거래소(KRX) 먼저 수색!
         df_krx = fdr.StockListing('KRX')
         df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
         
-        # 1-1. 숫자 6자리 (예: 005930) 입력 시
         if query.isdigit() and len(query) == 6:
             match = df_krx[df_krx['Code'] == query]
-            if not match.empty: 
-                return match['Name'].values[0], query
+            if not match.empty: return match['Name'].values[0], query
                 
-        # 1-2. 한글/영문 이름 정확히 일치 (HMM, NAVER 구출)
         query_nospace = query.replace(" ", "")
         match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
-        if not match.empty: 
-            return match['Name'].values[0], match['Code'].values[0]
+        if not match.empty: return match['Name'].values[0], match['Code'].values[0]
             
-        # 1-3. 이름 부분 일치 (가장 짧은 이름 우선)
         match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
         if not match_partial.empty: 
             best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
@@ -178,10 +171,7 @@ def get_stock_info(query):
             
     except: pass
     
-    # 2. 한국에 절대 없다면, 그제야 미국 티커(AAPL 등)로 간주!
-    if re.match(r'^[A-Z0-9\.]+$', query): 
-        return query, query
-        
+    if re.match(r'^[A-Z0-9\.]+$', query): return query, query
     return None, None
 
 @st.cache_data(ttl=86400)
@@ -383,7 +373,7 @@ with tab1:
                       annotation_text=f"현재가: {formatted_price}", annotation_position="right", 
                       annotation_font=dict(size=13, color="white"), annotation_bgcolor="#10b981", row=1, col=1)
 
-        # Hovermode 'x unified' 적용
+        # Hovermode 및 툴바 상시표시 (Zoom 리셋용)
         fig.update_layout(
             xaxis_rangeslider_visible=False, 
             xaxis2_rangeslider_visible=False,
@@ -392,20 +382,39 @@ with tab1:
             legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, font=dict(size=11)),
             hovermode="x unified"
         )
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, use_container_width=True, config={
+            'displayModeBar': True,
+            'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+            'displaylogo': False
+        })
 
+        # 💡 [핵심 업데이트] 1차 타점을 '현재가'에서 '5일선'으로 스마트하게 변경
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        curr_p = float(df['Close'].iloc[-1]); entry2 = float(tech_ind['EMA15']); tar_p = curr_p + (float(tech_ind['ATR']) * 4); stop_p = curr_p - (float(tech_ind['ATR']) * 2)
-        rr_1 = (tar_p - curr_p) / (curr_p - stop_p) if (curr_p - stop_p) > 0 else 0
+        curr_p = float(df['Close'].iloc[-1])
+        ema5 = float(tech_ind['EMA5'])
+        entry2 = float(tech_ind['EMA15'])
+        
+        # 1차 타점: 현재가가 5일선보다 높으면 5일선에서 기다리고, 5일선보다 낮으면 현재가 진입
+        entry1 = ema5 if curr_p > ema5 else curr_p
+        
+        # 목표가/손절가는 보수적으로 1차 타점(entry1) 기준으로 재계산
+        tar_p = entry1 + (float(tech_ind['ATR']) * 4)
+        stop_p = entry1 - (float(tech_ind['ATR']) * 2)
+        
+        rr_1 = (tar_p - entry1) / (entry1 - stop_p) if (entry1 - stop_p) > 0 else 0
         rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
 
-        c1.markdown("🎯 **추천 매수 타점**")
-        c1.info(f"**1차:** {format_price(curr_p, ticker)} (돌파)\n\n**2차:** {format_price(entry2, ticker)} (눌림)")
+        c1.markdown("🎯 **기다리는 매수 타점 (눌림목)**")
+        if curr_p > ema5 * 1.02: # 현재가가 5일선보다 2% 이상 붕 떠있을 때
+            c1.warning(f"**추격매수 금지!**\n\n**1차 대기:** {format_price(entry1, ticker)} (5일선)\n\n**2차 대기:** {format_price(entry2, ticker)} (15일선)")
+        else:
+            c1.info(f"**1차:** {format_price(entry1, ticker)} (5일선 부근)\n\n**2차:** {format_price(entry2, ticker)} (15일선 지지)")
+            
         c2.markdown("🛡️ **목표 및 손절 라인**")
         c2.warning(f"**목표가:** {format_price(tar_p, ticker)}\n\n**손절가:** {format_price(stop_p, ticker)}")
         c3.markdown("⚖️ **타점 매력도 (손익비)**")
-        c3.success(f"**현재가 진입시:** {rr_1:.1f}배\n\n**2차 진입시:** {rr_2:.1f}배 (극대화)")
+        c3.success(f"**1차 진입시:** {rr_1:.1f}배\n\n**2차 진입시:** {rr_2:.1f}배 (극대화)")
 
         st.markdown("---")
         fin_data = get_financial_summary(ticker)
@@ -654,8 +663,17 @@ with tab3:
                         is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
                         
                         if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
-                            p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
-                            tar_p = p + (a*4); stop_p = p - (a*2); entry2 = float(ind['EMA15'])
+                            curr_p = float(df['Close'].iloc[-1])
+                            ema5 = float(ind['EMA5'])
+                            entry2 = float(ind['EMA15'])
+                            
+                            # 💡 스크리너에서도 1차 타점을 5일선 대기(눌림목)로 똑똑하게 변경!
+                            entry1 = ema5 if curr_p > ema5 else curr_p
+                            
+                            a = float(ind['ATR'])
+                            tar_p = entry1 + (a*4)
+                            stop_p = entry1 - (a*2)
+                            
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
                             rule_str = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in ind["Cloud_Rules"].items()])
@@ -664,7 +682,8 @@ with tab3:
                                 "종목명": n, 
                                 "시그널": "🔥 강력" if sc==4 else "👍 분할", 
                                 "클라우드 세부조건": rule_str, 
-                                "현재가": p, 
+                                "현재가": curr_p, 
+                                "1차타점": entry1,
                                 "2차타점": entry2, 
                                 "목표가": tar_p, 
                                 "손절가": stop_p, 
@@ -687,14 +706,16 @@ with tab3:
                     for r in res:
                         is_krw = str(sl.get(r['종목명'], "A")).isdigit()
                         if is_krw:
-                            curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
+                            curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"
+                            entry1_p = f"{int(r['1차타점']):,}원"; entry2_p = f"{int(r['2차타점']):,}원"
                         else:
-                            curr_p = f"${r['현재가']:,.2f}"; tar_p = f"${r['목표가']:,.2f}"; stop_p = f"${r['손절가']:,.2f}"; entry2_p = f"${r['2차타점']:,.2f}"
+                            curr_p = f"${r['현재가']:,.2f}"; tar_p = f"${r['목표가']:,.2f}"; stop_p = f"${r['손절가']:,.2f}"
+                            entry1_p = f"${r['1차타점']:,.2f}"; entry2_p = f"${r['2차타점']:,.2f}"
 
                         info = f"🔥 <b>{r['종목명']}</b> ({r['시그널']})\n"
                         info += f" └ ☁️ <b>조건:</b> {r['클라우드 세부조건']}\n"
                         info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']} | <b>BB:</b> {r['BB상태']}\n"
-                        info += f" └ 🎯 <b>매수:</b> 1차 {curr_p} / 2차 {entry2_p}\n"
+                        info += f" └ 🎯 <b>매수대기:</b> 1차 {entry1_p} / 2차 {entry2_p}\n"
                         info += f" └ 🎯 <b>목표:</b> {tar_p}\n"
                         info += f" └ 🛡️ <b>손절:</b> {stop_p}\n"
                         info += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['손익비']:.1f}배 극대화\n\n"
