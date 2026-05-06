@@ -64,6 +64,43 @@ st.markdown("""
     
     /* 버튼 스타일링 */
     .stButton>button { border-radius: 12px !important; font-weight: 800 !important; letter-spacing: 0.5px; transition: all 0.3s; }
+    
+    /* 🛠️ [가독성 완벽 패치] 폼, 입력창, 탭, 라벨 등의 색상을 다크 테마에 맞게 강제 고정 */
+    label[data-testid="stWidgetLabel"] p { color: #cbd5e1 !important; font-weight: 600 !important; }
+    
+    .stTextInput input, .stNumberInput input { 
+        background-color: #1e293b !important; 
+        color: #f8fafc !important; 
+        border: 1px solid #334155 !important; 
+    }
+    
+    div[data-baseweb="select"] > div { 
+        background-color: #1e293b !important; 
+        color: #f8fafc !important; 
+        border: 1px solid #334155 !important; 
+    }
+    div[data-baseweb="select"] span { color: #f8fafc !important; }
+    ul[data-baseweb="menu"] { background-color: #1e293b !important; }
+    li[data-baseweb="menu-item"] { color: #f8fafc !important; background-color: #1e293b !important; }
+    li[data-baseweb="menu-item"]:hover { background-color: #334155 !important; }
+    
+    div[data-testid="stExpander"] details summary { 
+        background-color: #1e293b !important; 
+        color: #f8fafc !important; 
+        border: 1px solid #334155 !important; 
+        border-radius: 8px !important; 
+    }
+    div[data-testid="stExpander"] details summary p { color: #f8fafc !important; font-weight: 700 !important; }
+    
+    button[data-baseweb="tab"] p { color: #94a3b8 !important; font-weight: 600 !important; }
+    button[data-baseweb="tab"][aria-selected="true"] p { color: #38bdf8 !important; font-weight: 800 !important; }
+    
+    div[data-testid="stCheckbox"] p, div[data-testid="stRadio"] p { color: #f8fafc !important; }
+    
+    .stTextInput input:focus, .stNumberInput input:focus, div[data-baseweb="select"] > div:focus-within {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 1px #38bdf8 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -636,7 +673,7 @@ with tab2:
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
                 with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
                     market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
-                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
+                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrowsiterrows()])
                     rebalance_prompt = f"""
                     당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
                     아래 [오늘의 실시간 시황], [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
