@@ -1,3 +1,24 @@
+import os
+
+# 💎 [10점 만점 패치] 억센 하얀색 표/버튼을 뿌리뽑는 '강제 딥 다크 테마' 세팅 엔진
+theme_config = """[theme]
+base='dark'
+primaryColor='#38bdf8'
+backgroundColor='#0f172a'
+secondaryBackgroundColor='#1e293b'
+textColor='#f8fafc'
+"""
+os.makedirs(".streamlit", exist_ok=True)
+config_path = ".streamlit/config.toml"
+write_config = True
+if os.path.exists(config_path):
+    with open(config_path, "r") as f:
+        if f.read() == theme_config:
+            write_config = False
+if write_config:
+    with open(config_path, "w") as f:
+        f.write(theme_config)
+
 import streamlit as st
 import FinanceDataReader as fdr
 import requests
@@ -9,7 +30,6 @@ from datetime import datetime, timedelta
 import json
 import pandas as pd
 import numpy as np
-import os
 import time
 import re
 import textwrap
@@ -26,7 +46,7 @@ except ImportError as e:
 
 st.set_page_config(page_title="클라우드 퀀트 PRO", layout="wide", page_icon="☁️", initial_sidebar_state="collapsed")
 
-# 💎 [10점 만점 패치] 최고급 다크 테마 & 메신저 UI CSS 적용
+# 💎 최고급 다크 테마 & 메신저 UI CSS 적용
 st.markdown("""
 <style>
     /* 기본 배경 및 여백 설정 */
@@ -62,8 +82,12 @@ st.markdown("""
     /* 애니메이션 */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     
-    /* 🛠️ [가독성 완벽 패치 2탄] 버튼 스타일링 */
-    .stButton > button { 
+    /* 🛠️ [가독성 완벽 패치 2탄] 모든 버튼 스타일링 (폼 제출 버튼, 다운로드 버튼 포함) */
+    .stButton > button, 
+    [data-testid="stFormSubmitButton"] > button,
+    [data-testid="stDownloadButton"] > button,
+    button[kind="primary"], 
+    button[kind="secondary"] { 
         border-radius: 12px !important; 
         font-weight: 800 !important; 
         letter-spacing: 0.5px; 
@@ -72,13 +96,18 @@ st.markdown("""
         color: #f8fafc !important; 
         border: 1px solid #38bdf8 !important; 
     }
-    .stButton > button p { color: inherit !important; }
-    .stButton > button:hover { 
+    .stButton > button p, [data-testid="stFormSubmitButton"] > button p, [data-testid="stDownloadButton"] > button p { color: inherit !important; }
+    
+    .stButton > button:hover, 
+    [data-testid="stFormSubmitButton"] > button:hover,
+    [data-testid="stDownloadButton"] > button:hover,
+    button[kind="primary"]:hover, 
+    button[kind="secondary"]:hover { 
         background-color: #38bdf8 !important; 
         color: #0f172a !important; 
         border-color: #38bdf8 !important; 
     }
-    .stButton > button:focus {
+    .stButton > button:focus, [data-testid="stFormSubmitButton"] > button:focus {
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5) !important;
         color: #f8fafc !important;
     }
@@ -97,6 +126,9 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] p { color: #38bdf8 !important; font-weight: 800 !important; }
     div[data-testid="stCheckbox"] p, div[data-testid="stRadio"] p { color: #f8fafc !important; }
     .stTextInput input:focus, .stNumberInput input:focus, div[data-baseweb="select"] > div:focus-within { border-color: #38bdf8 !important; box-shadow: 0 0 0 1px #38bdf8 !important; }
+    
+    /* 표(Dataframe) 래퍼 테두리 정리 */
+    [data-testid="stDataFrame"] > div { border: 1px solid #334155 !important; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
