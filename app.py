@@ -62,45 +62,41 @@ st.markdown("""
     /* 애니메이션 */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     
-    /* 버튼 스타일링 */
-    .stButton>button { border-radius: 12px !important; font-weight: 800 !important; letter-spacing: 0.5px; transition: all 0.3s; }
+    /* 🛠️ [가독성 완벽 패치 2탄] 버튼 스타일링 */
+    .stButton > button { 
+        border-radius: 12px !important; 
+        font-weight: 800 !important; 
+        letter-spacing: 0.5px; 
+        transition: all 0.3s; 
+        background-color: #1e293b !important; 
+        color: #f8fafc !important; 
+        border: 1px solid #38bdf8 !important; 
+    }
+    .stButton > button p { color: inherit !important; }
+    .stButton > button:hover { 
+        background-color: #38bdf8 !important; 
+        color: #0f172a !important; 
+        border-color: #38bdf8 !important; 
+    }
+    .stButton > button:focus {
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5) !important;
+        color: #f8fafc !important;
+    }
     
-    /* 🛠️ [가독성 완벽 패치] 폼, 입력창, 탭, 라벨 등의 색상을 다크 테마에 맞게 강제 고정 */
+    /* 🛠️ [가독성 완벽 패치 1탄] 폼, 입력창 색상 고정 */
     label[data-testid="stWidgetLabel"] p { color: #cbd5e1 !important; font-weight: 600 !important; }
-    
-    .stTextInput input, .stNumberInput input { 
-        background-color: #1e293b !important; 
-        color: #f8fafc !important; 
-        border: 1px solid #334155 !important; 
-    }
-    
-    div[data-baseweb="select"] > div { 
-        background-color: #1e293b !important; 
-        color: #f8fafc !important; 
-        border: 1px solid #334155 !important; 
-    }
+    .stTextInput input, .stNumberInput input { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; }
+    div[data-baseweb="select"] > div { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; }
     div[data-baseweb="select"] span { color: #f8fafc !important; }
     ul[data-baseweb="menu"] { background-color: #1e293b !important; }
     li[data-baseweb="menu-item"] { color: #f8fafc !important; background-color: #1e293b !important; }
     li[data-baseweb="menu-item"]:hover { background-color: #334155 !important; }
-    
-    div[data-testid="stExpander"] details summary { 
-        background-color: #1e293b !important; 
-        color: #f8fafc !important; 
-        border: 1px solid #334155 !important; 
-        border-radius: 8px !important; 
-    }
+    div[data-testid="stExpander"] details summary { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; border-radius: 8px !important; }
     div[data-testid="stExpander"] details summary p { color: #f8fafc !important; font-weight: 700 !important; }
-    
     button[data-baseweb="tab"] p { color: #94a3b8 !important; font-weight: 600 !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #38bdf8 !important; font-weight: 800 !important; }
-    
     div[data-testid="stCheckbox"] p, div[data-testid="stRadio"] p { color: #f8fafc !important; }
-    
-    .stTextInput input:focus, .stNumberInput input:focus, div[data-baseweb="select"] > div:focus-within {
-        border-color: #38bdf8 !important;
-        box-shadow: 0 0 0 1px #38bdf8 !important;
-    }
+    .stTextInput input:focus, .stNumberInput input:focus, div[data-baseweb="select"] > div:focus-within { border-color: #38bdf8 !important; box-shadow: 0 0 0 1px #38bdf8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -357,6 +353,14 @@ def run_backtest_with_markers(df):
     wins = [t for t in sells if t['profit_pct'] > 0]
     stats = {'total_trades': len(sells), 'win_rate': (len(wins)/len(sells)*100) if sells else 0, 'total_return': ((balance-10000000)/10000000)*100}
     return stats, {'x': buy_dates, 'y': buy_prices}, {'x': sell_dates, 'y': sell_prices}
+
+# 💡 [핵심 버그 수정] 이전에 누락되었던 현재가 조회 함수 복구!
+@st.cache_data(ttl=3600)
+def get_current_price(ticker):
+    try:
+        df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+        return float(df['Close'].iloc[-1]) if not df.empty else 0.0
+    except: return 0.0
 
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "알테오젠", "애플(AAPL)"])
@@ -673,7 +677,8 @@ with tab2:
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
                 with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
                     market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
-                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrowsiterrows()])
+                    # 💡 [핵심 버그 수정] 오타(iterrowsiterrows) 수정 완료
+                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
                     rebalance_prompt = f"""
                     당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
                     아래 [오늘의 실시간 시황], [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
