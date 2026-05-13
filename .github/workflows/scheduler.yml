@@ -2,21 +2,26 @@ name: Quant Bot Scheduler
 
 on:
   schedule:
-    # 1. 모닝 브리핑: 매주 월~금, 한국 시간 아침 8시 30분 (UTC 기준 전날 23:30)
+    # 1. 모닝 브리핑: 매주 월~금, 한국 시간 아침 8시 30분 (UTC 기준 23:30)
     - cron: '30 23 * * 0-4'
-    # 2. 오후 스크리너: 매주 월~금, 한국 시간 오후 4시 00분 (UTC 기준 07:00)
+    
+    # 💡 [아이디어 5 적용] 2. 장중 거래량 폭발 스크리너: 매주 월~금, 한국 시간 오후 1시 00분 (UTC 기준 04:00)
+    - cron: '0 4 * * 1-5'
+    
+    # 3. 마감 스크리너 & 섹터 요약: 매주 월~금, 한국 시간 오후 4시 00분 (UTC 기준 07:00)
     - cron: '0 7 * * 1-5'
-  workflow_dispatch: # 수동으로 강제 실행할 수 있는 버튼 활성화
+    
+  workflow_dispatch: # 수동으로 강제 실행 버튼 활성화
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: 저장소 파일 불러오기
-        uses: actions/checkout@v4  # <--- 요기가 v4로 최신화됨
+        uses: actions/checkout@v4
         
       - name: 파이썬 설치
-        uses: actions/setup-python@v5 # <--- 요기가 v5로 최신화됨
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
@@ -25,7 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas finance-datareader beautifulsoup4 requests google-generativeai google-cloud-firestore
           
-      - name: 봇 실행 (모닝 브리핑 / 오후 스크리너 자동 분기)
+      - name: 봇 실행 (모닝/장중/마감 자동 분기)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -33,13 +38,13 @@ jobs:
           FIREBASE_JSON: ${{ secrets.FIREBASE_JSON }}
           USER_ID: ${{ secrets.USER_ID }}
         run: |
-          # 현재 시간이 UTC 23시(한국 아침 8시)인지, UTC 07시(한국 오후 4시)인지 확인
           CURRENT_HOUR=$(date -u +"%H")
           if [ "$CURRENT_HOUR" == "23" ]; then
             python bot.py morning
+          elif [ "$CURRENT_HOUR" == "04" ]; then
+            python bot.py intraday
           elif [ "$CURRENT_HOUR" == "07" ]; then
             python bot.py afternoon
           else
-            # 수동 실행 시 기본적으로 스크리너 작동
             python bot.py afternoon 
           fi
