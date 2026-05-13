@@ -121,24 +121,49 @@ def get_ai_analysis(prompt, is_json=True):
     if is_json: return json.loads(res.text.replace("```json", "").replace("```", "").strip())
     return res.text.strip()
 
+# 💡 [핵심 버그 수정] JSON 키 파싱을 이중 안전망으로 완벽하게 처리합니다.
 def get_db_client():
-    try:
-        pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
-        em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', FIREBASE_JSON)
-        pk_raw = FIREBASE_JSON[FIREBASE_JSON.find("-----BEGIN PRIVATE KEY-----") : FIREBASE_JSON.find("-----END PRIVATE KEY-----") + 25]
-        pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
-        private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
-        creds = service_account.Credentials.from_service_account_info({"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"})
-        return firestore.Client(credentials=creds, project=pm.group(1))
-    except Exception as e: 
-        print(f"DB 오류: {e}")
+    if not FIREBASE_JSON:
+        print("DB 오류: FIREBASE_JSON 환경 변수가 없습니다.")
         return None
+        
+    try:
+        # 1. 표준 JSON 방식으로 먼저 시도 (GitHub Secrets에 정상 입력된 경우)
+        creds_dict = json.loads(FIREBASE_JSON, strict=False)
+        # 줄바꿈 문자가 이스케이프('\\n')되어 있다면 실제 줄바꿈('\n')으로 복구
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+        
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        return firestore.Client(credentials=creds, project=creds_dict.get("project_id"))
+        
+    except Exception as e1:
+        # 2. 실패 시 기존 정규식 방식으로 안전하게 다시 시도 (텍스트가 약간 깨진 경우 대비)
+        try:
+            pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
+            em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', FIREBASE_JSON)
+            pk_raw = FIREBASE_JSON[FIREBASE_JSON.find("-----BEGIN PRIVATE KEY-----") : FIREBASE_JSON.find("-----END PRIVATE KEY-----") + 25]
+            pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
+            private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
+            
+            creds_dict = {
+                "type": "service_account", 
+                "project_id": pm.group(1), 
+                "private_key": private_key, 
+                "client_email": em.group(1), 
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+            creds = service_account.Credentials.from_service_account_info(creds_dict)
+            return firestore.Client(credentials=creds, project=pm.group(1))
+        except Exception as e2: 
+            print(f"DB 오류 (이중 파싱 실패): {e1} / {e2}")
+            return None
 
 # --- 1. 아침 모닝 브리핑 ---
 def run_morning_briefing():
     print("🌅 [모닝 브리핑 기동]")
     db = get_db_client()
-    if not db: return send_telegram("⚠️ [모닝 브리핑] DB 연결에 실패했습니다. Firebase 설정을 확인해주세요.")
+    if not db: return send_telegram("⚠️ [모닝 브리핑] DB 연결에 실패했습니다. Firebase JSON 키 형식을 확인해주세요.")
     
     print(f"🔍 사용자[{USER_ID}]의 포트폴리오 조회 중...")
     doc = db.collection('portfolios').document(USER_ID).get()
