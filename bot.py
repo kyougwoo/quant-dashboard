@@ -1,4 +1,4 @@
-import os, sys, time, json, requests
+import os, sys, time, json, requests, re
 import pandas as pd
 from datetime import datetime, timedelta
 import FinanceDataReader as fdr
@@ -143,7 +143,6 @@ def run_morning_briefing():
     print(f"🔍 사용자[{USER_ID}]의 포트폴리오 조회 중...")
     doc = db.collection('portfolios').document(USER_ID).get()
     
-    # 💡 [버그 수정] 포트폴리오가 비어있어도 무조건 텔레그램 알림을 보내서 살아있는지 확인시킴
     if not doc.exists: 
         return send_telegram(f"⚠️ [모닝 브리핑] <b>{USER_ID}</b>님의 등록된 포트폴리오가 없습니다. 웹 대시보드에 접속해서 종목을 먼저 편입해주세요!")
     
