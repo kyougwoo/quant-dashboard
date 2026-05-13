@@ -34,15 +34,23 @@ def get_recent_news(keyword):
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
     except: return []
 
-# 💡 [핵심 추가] 전체 시장 종목 불러오기 로직 (코스피 + 코스닥)
 def load_krx_data():
-    try:
-        return fdr.StockListing('KRX')
-    except:
-        return pd.DataFrame()
+    try: return fdr.StockListing('KRX')
+    except: return pd.DataFrame()
 
-def get_screener_target_stocks():
+def get_screener_target_stocks(db=None):
     sl = {}
+    if db:
+        try:
+            doc = db.collection('users').document(USER_ID).get()
+            if doc.exists:
+                watchlist = doc.to_dict().get('watchlist', [])
+                krx = load_krx_data()
+                for w in watchlist:
+                    try: sl[w] = krx[krx['Name']==w]['Code'].values[0]
+                    except: pass
+        except: pass
+
     try:
         df = load_krx_data()
         if not df.empty and 'Market' in df.columns:
@@ -57,243 +65,225 @@ def get_screener_target_stocks():
             d[col] = d[col].astype(str).str.zfill(6)
             d = d[d[col].str.match(r'^\d{6}$')]
             d = d[~d['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
-            
-            # 각각 상위 100개씩 추출 (총 200종목)
             top_stocks = dict(zip(d.head(100)['Name'], d.head(100)[col]))
             sl.update(top_stocks)
     except:
-        sl = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "NAVER":"035420", "알테오젠":"196170", "에코프로비엠":"247540"}
-    
+        sl.update({"삼성전자":"005930", "SK하이닉스":"000660", "알테오젠":"196170", "에코프로비엠":"247540"})
     return sl
 
 def calculate_cloud_indicators(df):
-    if df is None or df.empty: return None, {}
-    
-    df = df[~df.index.duplicated(keep='first')] 
+    if df is None or df.empty or len(df) < 200: return None, {}
     df = df.dropna(subset=['Close'])
-    
-    if len(df) < 200: return None, {}
-    
     df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
     df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
     df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
     df['BB_Mid'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
-    df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
-    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
+    df['BB_Width'] = ((df['BB_Mid'] + (df['BB_Std']*2)) - (df['BB_Mid'] - (df['BB_Std']*2))) / df['BB_Mid']
     
     delta = df['Close'].diff()
-    gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-    df['RSI'] = (100 - (100 / (1 + (gain / loss)))).fillna(50)
-    
+    df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
     df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
     recent_60 = df.tail(60)
     vol_ref_price = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
     
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift(1)).abs()
-    low_close = (df['Low'] - df['Close'].shift(1)).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(window=14).mean()
     
     latest, prev = df.iloc[-1], df.iloc[-2]
-    try: monthly_close = df['Close'].resample('ME').last()
-    except: monthly_close = df['Close'].resample('M').last()
-    current_monthly_ema10 = float(monthly_close.ewm(span=10, adjust=False).mean().iloc[-1])
-    
-    is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
+    try: current_monthly_ema10 = float(df['Close'].resample('ME').last().ewm(span=10, adjust=False).mean().iloc[-1])
+    except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
     
     indicators = {
-        "EMA15": float(latest['EMA15']),
-        "EMA5": float(latest['EMA5']),
+        "EMA15": float(latest['EMA15']), "EMA5": float(latest['EMA5']),
         "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
-        "BB_Is_Squeeze": is_squeeze,
+        "BB_Is_Squeeze": bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False,
         "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
-        "RSI": float(latest['RSI']),
-        "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
+        "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
         "Cloud_Rules": {
             "주가 > 200일선": bool(latest['Close'] > latest['EMA200']),
             "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']),
             "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']),
             "최대 거래량 종가 돌파": bool(latest['Close'] > vol_ref_price)
-        }
+        },
+        "Volume_Surge": bool(latest['Volume'] > prev['Volume'] * 3)
     }
     return df, indicators
 
-def get_ai_analysis(prompt):
+def get_ai_analysis(prompt, is_json=True):
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-    return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+    config = {"response_mime_type": "application/json"} if is_json else {}
+    res = model.generate_content(prompt, generation_config=config)
+    if is_json: return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+    return res.text.strip()
 
-# --- 3. 아침 모닝 브리핑 ---
+def get_db_client():
+    try:
+        pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
+        em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', FIREBASE_JSON)
+        pk_raw = FIREBASE_JSON[FIREBASE_JSON.find("-----BEGIN PRIVATE KEY-----") : FIREBASE_JSON.find("-----END PRIVATE KEY-----") + 25]
+        pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
+        private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
+        creds = service_account.Credentials.from_service_account_info({"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"})
+        return firestore.Client(credentials=creds, project=pm.group(1))
+    except Exception as e: 
+        print(f"DB 오류: {e}")
+        return None
+
+# --- 1. 아침 모닝 브리핑 ---
 def run_morning_briefing():
-    print("🌅 [모닝 브리핑 스케줄러 기동 시작]")
-    import re
-    pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', FIREBASE_JSON)
-    em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', FIREBASE_JSON)
-    pk_raw = FIREBASE_JSON[FIREBASE_JSON.find("-----BEGIN PRIVATE KEY-----") : FIREBASE_JSON.find("-----END PRIVATE KEY-----") + 25]
-    pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
-    private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
+    print("🌅 [모닝 브리핑 기동]")
+    db = get_db_client()
+    if not db: return send_telegram("⚠️ [모닝 브리핑] DB 연결에 실패했습니다. Firebase 설정을 확인해주세요.")
     
-    token_url = "https://" + "oauth2.googleapis.com/token"
-    creds_dict = {"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": token_url}
-    creds = service_account.Credentials.from_service_account_info(creds_dict)
-    db = firestore.Client(credentials=creds, project=pm.group(1))
-    
+    print(f"🔍 사용자[{USER_ID}]의 포트폴리오 조회 중...")
     doc = db.collection('portfolios').document(USER_ID).get()
-    if not doc.exists:
-        send_telegram("⚠️ 등록된 포트폴리오가 없습니다.")
-        return
+    
+    # 💡 [버그 수정] 포트폴리오가 비어있어도 무조건 텔레그램 알림을 보내서 살아있는지 확인시킴
+    if not doc.exists: 
+        return send_telegram(f"⚠️ [모닝 브리핑] <b>{USER_ID}</b>님의 등록된 포트폴리오가 없습니다. 웹 대시보드에 접속해서 종목을 먼저 편입해주세요!")
     
     doc_data = doc.to_dict()
     stocks = doc_data.get('stocks', []) if 'stocks' in doc_data else (doc_data if isinstance(doc_data, list) else [])
     realized_profit = doc_data.get('realized_profit', 0) if isinstance(doc_data, dict) else 0
     
+    if not stocks:
+        return send_telegram(f"⚠️ [모닝 브리핑] <b>{USER_ID}</b>님의 포트폴리오에 보유 중인 종목이 없습니다. 현금 100% 상태입니다.")
+    
     portfolio_context = ""
     portfolio_info_list = []
-    ticker_map = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "기아":"000270", "LG에너지솔루션":"373220"}
+    urgent_alerts = []
     
+    krx = load_krx_data()
     for s in stocks:
         name = s['종목명']
-        tck = ticker_map.get(name)
-        if not tck:
-            try:
-                krx = fdr.StockListing('KRX')
-                tck = krx[krx['Name']==name]['Code'].values[0]
-            except: continue
+        try: tck = krx[krx['Name']==name]['Code'].values[0]
+        except: continue
             
         df = fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
         df, ind = calculate_cloud_indicators(df)
         if ind:
             price = float(df['Close'].iloc[-1])
             prof = (price - s['매수단가']) / s['매수단가'] * 100 if s['매수단가'] > 0 else 0
-            stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, RSI={ind.get('RSI'):.1f}, MACD={'골든크로스' if ind.get('MACD_Cross') else '데드크로스'}"
-            portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
             
             a = float(ind['ATR'])
-            portfolio_info_list.append({
-                'name': name, 'price': price, 'stop': price - (a*2), 'target': price + (a*4), 'prof': prof
-            })
+            target = s['매수단가'] + (a*4)
+            stop = s['매수단가'] - (a*2)
+            
+            if price <= stop and s['매수단가'] > 0:
+                urgent_alerts.append(f"🚨 <b>[긴급 손절] {name}</b>: 손절가({int(stop):,}원) 이탈! 기계적인 매도가 필요합니다.")
+            elif price >= target and s['매수단가'] > 0:
+                urgent_alerts.append(f"🎉 <b>[목표 달성] {name}</b>: 목표가({int(target):,}원) 도달! 분할 익절을 고려하세요.")
+                
+            stat = f"월봉10선={'안전' if ind.get('Is_Above_Monthly_EMA10') else '위험'}, RSI={ind.get('RSI'):.1f}, MACD={'골든' if ind.get('MACD_Cross') else '데드'}"
+            portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, 지표: {stat}, 뉴스: {get_recent_news(name)}\n"
+            portfolio_info_list.append({'name': name, 'price': price, 'stop': stop, 'target': target, 'prof': prof})
 
     print("🧠 AI 분석 중...")
     market_news = get_recent_news("미국 증시 마감") + get_recent_news("국내 증시 시황")
     prompt = f"""
-    당신은 글로벌 퀀트 전략가입니다. 아래 데이터를 바탕으로 오늘의 모닝 브리핑을 JSON으로 작성해주세요.
-    * 수칙: RSI가 70 이상(과열)이면서 MACD가 데드크로스인 종목은 강력 매도를 권고하세요.
-    [시장 뉴스]\n{market_news}\n[포트폴리오]\n{portfolio_context}\n
+    당신은 글로벌 퀀트 전략가입니다.
+    [뉴스]\n{market_news}\n[포트폴리오]\n{portfolio_context}\n
     [형식]\n{{ "market_overview": "오늘 장 요약(3문장)", "stock_briefings": [ {{"stock": "종목명", "alert_level": "🟢 안전/🟡 주의/🔴 위험", "strategy": "대응 전략(2문장)"}} ], "action_plan": "핵심 지침(1문장)" }}
     """
     res = get_ai_analysis(prompt)
     
     msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n"
-    msg += f"💰 <b>내 가계부 현황</b>: 누적 실현손익 {int(realized_profit):,}원\n\n"
-    msg += "📊 <b>내 포트폴리오 점검</b>\n"
-    for p in portfolio_info_list:
-        msg += f"🔹 <b>{p['name']}</b> (수익률: {p['prof']:.1f}%)\n"
-        msg += f" └ 💵 현재가: {int(p['price']):,}원\n"
-        msg += f" └ 🎯 목표가: {int(p['target']):,}원\n"
-        msg += f" └ 🛡️ 손절가: {int(p['stop']):,}원\n\n"
     
-    msg += f"🌐 <b>시장 동향</b>\n{res['market_overview']}\n\n"
-    msg += "🎯 <b>종목별 전략</b>\n"
-    for s in res['stock_briefings']: msg += f"- <b>{s['stock']}</b>: {s['strategy']}\n"
-    msg += f"\n💡 <b>오늘의 지침:</b> {res['action_plan']}"
+    if urgent_alerts:
+        msg += "⚠️ <b>[포트폴리오 긴급 액션 요망]</b>\n"
+        for alert in urgent_alerts: msg += f"{alert}\n"
+        msg += "\n"
+        
+    msg += f"💰 <b>내 가계부</b>: 누적 실현손익 {int(realized_profit):,}원\n\n"
+    msg += "📊 <b>포트폴리오 상태</b>\n"
+    for p in portfolio_info_list:
+        msg += f"🔹 <b>{p['name']}</b> ({p['prof']:.1f}%)\n"
+        msg += f" └ 현재 {int(p['price']):,}원 / 🎯목표 {int(p['target']):,}원 / 🛡️손절 {int(p['stop']):,}원\n"
+    
+    msg += f"\n🌐 <b>시장 동향</b>\n{res.get('market_overview','')}\n\n"
+    msg += "🎯 <b>종목 전략</b>\n"
+    for s in res.get('stock_briefings',[]): msg += f"- <b>{s['stock']}</b>: {s['strategy']}\n"
     
     send_telegram(msg)
-    print("✅ 모닝 브리핑 루틴 완료")
 
-# --- 4. 오후 스크리너 (오후 4시) ---
-def run_afternoon_screener():
-    print("🔍 [오후 타점 스크리너 기동 시작]")
+# --- 2. 장중/마감 스크리너 로직 ---
+def run_intraday_screener():
+    print("⚡ [장중 폭발 스크리너 기동]")
+    db = get_db_client()
+    sl = get_screener_target_stocks(db)
     
-    # 💡 [핵심 추가] 텔레그램 봇도 코스피 Top 100 + 코스닥 Top 100 (총 200종목)을 스캔합니다!
-    sl = get_screener_target_stocks()
-    print(f"📊 총 {len(sl)}개 종목 스캔을 시작합니다...")
+    res_list = []
+    for n, c in sl.items():
+        try:
+            df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+            if ind and ind.get('Volume_Surge'): 
+                sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
+                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
+                    res_list.append({"name": n, "price": float(df['Close'].iloc[-1]), "rsi": ind['RSI']})
+            time.sleep(0.3)
+        except: pass
+        
+    if res_list:
+        msg = "⚡ <b>[긴급 장중 수급 폭발 포착]</b>\n어제 대비 거래량이 300% 이상 터진 타점 종목입니다!\n\n"
+        for r in res_list:
+            msg += f"🔥 <b>{r['name']}</b> (현재가: {int(r['price']):,}원 / RSI: {r['rsi']:.1f})\n"
+        send_telegram(msg)
+
+def run_afternoon_screener():
+    print("🔍 [오후 타점 스크리너 기동]")
+    db = get_db_client()
+    sl = get_screener_target_stocks(db)
     
     res_list = []
     for i, (n, c) in enumerate(sl.items()):
-        if i % 20 == 0: print(f"진행 중... ({i}/{len(sl)})")
         try:
-            df = fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-            df, ind = calculate_cloud_indicators(df)
+            df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
-                is_macd_bullish = ind['MACD_Cross']
-                is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
-                
-                # 💡 조건: 클라우드 점수 2 이상, 월봉 안전, MACD/RSI 통과
-                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
-                    curr_p = float(df['Close'].iloc[-1])
-                    ema5 = float(ind['EMA5'])
-                    entry1 = ema5 if curr_p > ema5 else curr_p
-                    
+                if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and ind['MACD_Cross'] and (ind['RSI'] > 50 or ind['RSI'] <= 35):
+                    p = float(df['Close'].iloc[-1])
                     a = float(ind['ATR'])
-                    tar_p = entry1 + (a * 4)
-                    stop_p = entry1 - (a * 2)
-                    entry2 = float(ind['EMA15'])
-                    rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
-                    
                     res_list.append({
-                        "name": n, 
-                        "sig": "🔥 강력" if sc==4 else "👍 분할", 
-                        "score": sc,
-                        "rules": ind["Cloud_Rules"],
-                        "price": curr_p,
-                        "entry1": entry1,
-                        "entry2": entry2,
-                        "target": tar_p,
-                        "stop": stop_p,
-                        "rr_2": rr_2,
-                        "rsi": ind['RSI'],
-                        "macd": "골든크로스" if is_macd_bullish else "데드크로스",
-                        "is_squeeze": ind.get("BB_Is_Squeeze", False)
+                        "name": n, "sig": "🔥 강력" if sc==4 else "👍 분할", "score": sc,
+                        "price": p, "entry1": ind['EMA5'] if p > ind['EMA5'] else p,
+                        "target": (ind['EMA5'] if p > ind['EMA5'] else p) + (a * 4), "stop": (ind['EMA5'] if p > ind['EMA5'] else p) - (a * 2),
+                        "rsi": ind['RSI'], "macd": "골든크로스" if ind['MACD_Cross'] else "데드크로스", "is_squeeze": ind.get("BB_Is_Squeeze", False)
                     })
             time.sleep(0.3)
         except: pass
         
-    # 스퀴즈 종목이 맨 위로 오도록 정렬
     res_list.sort(key=lambda x: (x['is_squeeze'], x['score']), reverse=True)
     
-    # 텔레그램 메시지 포맷팅
-    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n(코스피/코스닥 Top 200 스캔 완료)\n\n"
+    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n총 {len(res_list)}개 타점 발견\n\n"
+    found_stock_names = []
     for r in res_list: 
-        rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
-        bb_stat = "🚨스퀴즈(응축 폭발전야!)🚨" if r['is_squeeze'] else "확장"
+        found_stock_names.append(r['name'])
+        bb_stat = "🚨스퀴즈🚨" if r['is_squeeze'] else "확장"
+        info = f"<b>{r['name']}</b> ({r['sig']}) | RSI:{r['rsi']:.1f} | {bb_stat}\n"
+        info += f" └ 대기:{int(r['entry1']):,}원 / 🎯목표:{int(r['target']):,}원 / 🛡️손절:{int(r['stop']):,}원\n\n"
+        if len(msg) + len(info) > 3500:
+            send_telegram(msg); time.sleep(0.5); msg = info
+        else: msg += info
         
-        info = f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
-        info += f" └ ☁️ <b>조건:</b> {rule_details}\n"
-        info += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {bb_stat}\n"
-        info += f" └ 🎯 <b>매수대기:</b> 1차 {int(r['entry1']):,}원 (현재 {int(r['price']):,}원)\n"
-        info += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
-        info += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
-        info += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['rr_2']:.1f}배 극대화\n\n"
-        
-        # 텔레그램 메시지 길이 제한(약 4000자) 방어
-        if len(msg) + len(info) > 3800:
-            send_telegram(msg)
-            time.sleep(0.5)
-            msg = info
-        else:
-            msg += info
-        
-    if not res_list: msg += "월봉 10선 위 안전하며 매수 조건에 맞는 종목이 오늘은 없습니다."
-    
+    if not res_list: msg += "안전한 매수 타점 종목이 없습니다."
     send_telegram(msg)
-    print("✅ 스크리너 루틴 완료")
+    
+    if found_stock_names:
+        print("🧠 테마 요약 AI 분석 중...")
+        theme_prompt = f"오늘 퀀트 검색기에 포착된 종목들입니다: {', '.join(found_stock_names)}\n위 종목들을 보고 현재 한국 시장의 수급이 어떤 섹터나 테마로 쏠리고 있는지 3~4줄로 분석하여 브리핑해주세요. (평문으로 응답)"
+        theme_summary = get_ai_analysis(theme_prompt, is_json=False)
+        send_telegram(f"💡 <b>[AI 주도 테마 요약]</b>\n\n{theme_summary}")
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "afternoon"
     print(f"🚀 봇 실행 모드: {mode}")
     
-    if mode == "morning":
-        run_morning_briefing()
-    elif mode == "afternoon":
-        run_afternoon_screener()
-    else:
-        print("Usage: python bot.py [morning|afternoon]")
+    if mode == "morning": run_morning_briefing()
+    elif mode == "intraday": run_intraday_screener()
+    elif mode == "afternoon": run_afternoon_screener()
+    else: print("Usage: python bot.py [morning|intraday|afternoon]")
