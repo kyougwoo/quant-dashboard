@@ -82,7 +82,7 @@ st.markdown("""
     /* 애니메이션 */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     
-    /* 🛠️ 버튼 스타일링 (하얀색 배경 날아가는 문제 해결) */
+    /* 🛠️ 버튼 스타일링 */
     .stButton > button, [data-testid="stFormSubmitButton"] > button, [data-testid="stDownloadButton"] > button, button[kind="primary"], button[kind="secondary"] { 
         border-radius: 12px !important; font-weight: 800 !important; letter-spacing: 0.5px; transition: all 0.3s; background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #38bdf8 !important; 
     }
@@ -226,30 +226,23 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 [핵심 버그 수정] KRX 데이터 전체 로드와 검색 함수 분리 (오류 캐싱 방지)
 @st.cache_data(ttl=86400)
 def load_krx_data():
-    try:
-        return fdr.StockListing('KRX')
-    except:
-        return pd.DataFrame() # 오류 시 빈 데이터프레임 반환
+    try: return fdr.StockListing('KRX')
+    except: return pd.DataFrame()
 
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
-    
-    # 💡 [초강력 안전망] 네트워크 오류가 발생해도 우량주는 무조건 검색되도록 하드코딩 백업
     fallback = {
         "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
         "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220",
         "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270"
     }
-    
     if query in fallback: return query, fallback[query]
     for k, v in fallback.items():
         if v == query: return k, v
-        
     try:
         df_krx = load_krx_data()
         if not df_krx.empty:
@@ -265,7 +258,6 @@ def get_stock_info(query):
                 best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
                 return best['Name'], best['Code']
     except: pass
-    
     if re.match(r'^[A-Z0-9\.]+$', query): return query, query
     return None, None
 
@@ -285,11 +277,8 @@ def get_financial_summary(ticker):
 def get_top_200_stocks():
     try:
         df = load_krx_data()
-        if not df.empty and 'Market' in df.columns:
-            df = df[df['Market'].str.contains('KOSPI', na=False)]
-        else:
-            df = fdr.StockListing('KOSPI')
-            
+        if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSPI', na=False)]
+        else: df = fdr.StockListing('KOSPI')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
@@ -297,16 +286,12 @@ def get_top_200_stocks():
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {"삼성전자":"005930", "SK하이닉스":"000660"}
 
-# 💡 [핵심 추가] 코스닥 전용 스크리닝 함수 추가
 @st.cache_data(ttl=86400)
 def get_kosdaq_top_200_stocks():
     try:
         df = load_krx_data()
-        if not df.empty and 'Market' in df.columns:
-            df = df[df['Market'].str.contains('KOSDAQ', na=False)]
-        else:
-            df = fdr.StockListing('KOSDAQ')
-            
+        if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSDAQ', na=False)]
+        else: df = fdr.StockListing('KOSDAQ')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
@@ -753,15 +738,25 @@ with tab2:
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
                 with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
                     market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
-                    txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
+                    # 💡 [핵심 버그 수정 완료] AI가 환각(상상)을 하지 못하도록 실제 보유 종목 데이터를 프롬프트에 다시 정상적으로 전달합니다!
+                    txt = "\n".join([f"- {r['종목명']} (매수단가: {r['매수단가']}원, 수량: {r['수량']}주, 현재가: {r['현재가']}원, 비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
+                    
                     rebalance_prompt = f"""
                     당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
-                    아래 [오늘의 실시간 시황], [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
+                    아래 [오늘의 실시간 시황], [계좌 자산 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
+                    
+                    [오늘의 실시간 시황 뉴스]
+                    {market_news}
+
+                    [계좌 자산 현황]
+                    - 총 자산: {int(total_asset_value):,}원 / 보유 예수금: {int(remaining_cash):,}원
+                    - 현재 보유 종목 (이 종목들에 대해서만 평가하세요):\n{txt}
                     
                     [분석 수칙]
                     1. '오늘의 실시간 시황 뉴스'를 반드시 반영하여 거시경제 상황에 맞는 액션을 취하세요.
-                    2. 현금 비중이 10% 미만이면 위험 상태로 간주, 수익 중인 종목 매도를 통해 현금 확보 지시.
-                    3. 출력 형식 (JSON): {{ "market_view": "시황이 반영된 포트폴리오 진단 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "시황 및 데이터를 근거로 한 이유" }} ], "final_advice": "최종 조언" }}
+                    2. 🚨보유하지 않은 종목은 절대 창작해서 지시하지 마세요. 오직 위 [계좌 자산 현황]의 '현재 보유 종목' 리스트에 있는 종목만 분석하세요🚨
+                    3. 현금 비중이 10% 미만이면 위험 상태로 간주, 수익 중인 종목 매도를 통해 현금 확보 지시.
+                    4. 출력 형식 (JSON): {{ "market_view": "시황이 반영된 포트폴리오 진단 (2문장)", "action_plan": [ {{ "stock": "종목명", "action": "매수 / 매도 / 유지", "reason": "시황 및 데이터를 근거로 한 이유" }} ], "final_advice": "최종 조언" }}
                     """
                     try:
                         res = get_ai_analysis(rebalance_prompt, gemini_api_key)
@@ -808,8 +803,6 @@ with tab2:
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
-    
-    # 💡 [핵심 추가] '한국 코스닥 상위 200종목' 옵션이 추가되었습니다!
     mode = st.radio("시장 스캔 모드 선택", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🚀 한국 코스닥 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"], horizontal=True)
     send_to_telegram = st.checkbox("📱 스캔 완료 시 내 텔레그램으로 전송", value=True)
     
@@ -820,7 +813,7 @@ with tab3:
         with st.spinner("시장 전체 종목을 빅데이터 알고리즘으로 필터링 중입니다... (1~2분 소요)"):
             if "한국 우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "NAVER":"035420", "카카오":"035720"}
             elif "한국 코스피" in mode: sl = get_top_200_stocks()
-            elif "한국 코스닥" in mode: sl = get_kosdaq_top_200_stocks() # 💡 코스닥 스크리닝 함수 연결!
+            elif "한국 코스닥" in mode: sl = get_kosdaq_top_200_stocks()
             else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
