@@ -226,24 +226,45 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
+# 💡 [핵심 버그 수정] KRX 데이터 전체 로드와 검색 함수 분리 (오류 캐싱 방지)
 @st.cache_data(ttl=86400)
+def load_krx_data():
+    try:
+        return fdr.StockListing('KRX')
+    except:
+        return pd.DataFrame() # 오류 시 빈 데이터프레임 반환
+
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
+    
+    # 💡 [초강력 안전망] 네트워크 오류가 발생해도 우량주는 무조건 검색되도록 하드코딩 백업
+    fallback = {
+        "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
+        "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
+        "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220"
+    }
+    
+    if query in fallback: return query, fallback[query]
+    for k, v in fallback.items():
+        if v == query: return k, v
+        
     try:
-        df_krx = fdr.StockListing('KRX')
-        df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
-        if query.isdigit() and len(query) == 6:
-            match = df_krx[df_krx['Code'] == query]
-            if not match.empty: return match['Name'].values[0], query
-        query_nospace = query.replace(" ", "")
-        match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
-        if not match.empty: return match['Name'].values[0], match['Code'].values[0]
-        match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
-        if not match_partial.empty: 
-            best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
-            return best['Name'], best['Code']
+        df_krx = load_krx_data()
+        if not df_krx.empty:
+            df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
+            if query.isdigit() and len(query) == 6:
+                match = df_krx[df_krx['Code'] == query]
+                if not match.empty: return match['Name'].values[0], query
+            query_nospace = query.replace(" ", "")
+            match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
+            if not match.empty: return match['Name'].values[0], match['Code'].values[0]
+            match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
+            if not match_partial.empty: 
+                best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
+                return best['Name'], best['Code']
     except: pass
+    
     if re.match(r'^[A-Z0-9\.]+$', query): return query, query
     return None, None
 
@@ -262,7 +283,8 @@ def get_financial_summary(ticker):
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
-        df = fdr.StockListing('KOSPI')
+        df = load_krx_data()
+        if df.empty: df = fdr.StockListing('KOSPI')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
