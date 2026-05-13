@@ -150,7 +150,6 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                             user_ref = db.collection('users').document(login_id)
                             user_doc = user_ref.get()
                             
-                            # 💡 [핵심 추가] 'admin' 아이디로 로그인 시 자동으로 최고관리자(Admin) 권한 부여
                             if login_id.lower() == 'admin':
                                 target_tier = 'Admin'
                             elif login_id.lower() == 'vip':
@@ -160,7 +159,6 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
 
                             if user_doc.exists and user_doc.to_dict().get('password') == login_pw:
                                 current_tier = user_doc.to_dict().get('tier', 'Free')
-                                # admin으로 로그인했는데 등급이 Admin이 아니면 자동 업그레이드
                                 if login_id.lower() == 'admin' and current_tier != 'Admin':
                                     user_ref.update({'tier': 'Admin'})
                                     current_tier = 'Admin'
@@ -393,7 +391,6 @@ with col_s2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 💡 [핵심 추가] Admin 권한일 때만 4번째 '회원 관리' 탭 생성
 is_admin = (st.session_state.user_tier == 'Admin')
 tab_titles = ["📊 프로 차트 분석", "💼 포트폴리오 관리", "📡 프리미엄 스크리너"]
 if is_admin: tab_titles.append("🛠️ 회원 관리 (Admin)")
@@ -634,7 +631,8 @@ with tab2:
             fig_b.update_layout(title_text="종목별 수익률 현황", height=280, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_b, use_container_width=True, config={'displayModeBar': False})
 
-    buy_tab, sell_tab = st.tabs(["🛒 종목 매수 (추가)", "💰 종목 매도 (실현손익 기록)"])
+    # 💡 [핵심 추가] 오류 수정용 '삭제' 탭이 추가되었습니다!
+    buy_tab, sell_tab, del_tab = st.tabs(["🛒 종목 매수 (추가)", "💰 종목 매도 (수익 실현)", "🗑️ 기록 삭제 (오류 수정)"])
     
     with buy_tab:
         with st.form("buy_form"):
@@ -653,7 +651,7 @@ with tab2:
         if not dis_df.empty:
             with st.form("sell_form"):
                 sc1, sc2, sc3, sc4 = st.columns(4)
-                with sc1: s_name = st.selectbox("매도 종목 선택", dis_df['종목명'].tolist())
+                with sc1: s_name = st.selectbox("매도 종목 선택", dis_df['종목명'].tolist(), key="sell_select")
                 with sc2: s_price = st.number_input("실제 매도 단가", min_value=0.0, step=1000.0)
                 with sc3: s_qty = st.number_input("매도 수량", min_value=1.0, step=1.0)
                 with sc4:
@@ -670,6 +668,25 @@ with tab2:
                                 save_portfolio(p_data); st.success(f"매도 완료! 실현손익: {int(realized_pnl):,}원 반영됨"); time.sleep(1); st.rerun()
         else:
             st.info("매도할 보유 종목이 없습니다.")
+
+    # 💡 [핵심 추가] 잘못 입력된 기록을 실현손익 반영 없이 깔끔하게 지우는 기능
+    with del_tab:
+        if not dis_df.empty:
+            with st.form("delete_form"):
+                st.markdown("<p style='color: #fca5a5; font-weight: 600; margin-bottom: 5px;'>🚨 주의: 이 기능은 매도(수익 확정)가 아닙니다. 실수로 입력한 종목을 가계부에 영향 없이 단순히 지우는 기능입니다.</p>", unsafe_allow_html=True)
+                d_c1, d_c2 = st.columns([3, 1])
+                with d_c1: 
+                    d_name = st.selectbox("삭제할 오류 종목 선택", dis_df['종목명'].tolist(), key="del_select")
+                with d_c2:
+                    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                    if st.form_submit_button("🗑️ 즉시 영구 삭제", use_container_width=True):
+                        idx = next((i for i, item in enumerate(p_data['stocks']) if item["종목명"] == d_name), None)
+                        if idx is not None:
+                            p_data['stocks'].pop(idx)
+                            save_portfolio(p_data)
+                            st.success(f"✅ [{d_name}] 기록이 완전히 삭제되었습니다."); time.sleep(1); st.rerun()
+        else:
+            st.info("삭제할 오류 종목 기록이 없습니다.")
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 현재 보유 종목 리스트</h4>", unsafe_allow_html=True)
@@ -845,7 +862,7 @@ with tab3:
                 st.warning("⚠️ 현재 하락장 또는 조정장입니다. 월봉 10선 위 안전한 매수 타점 종목이 없습니다. (현금 보유 권고)")
 
 # -----------------------------------------------------
-# 💡 [핵심 추가] 탭 4: 최고 관리자 전용 회원 관리 시스템
+# 💡 [탭 4] 최고 관리자 전용 회원 관리 시스템
 # -----------------------------------------------------
 if is_admin:
     with tab4:
@@ -867,7 +884,6 @@ if is_admin:
                 
             if user_list:
                 df_users = pd.DataFrame(user_list)
-                # 날짜 형식 예쁘게 만들기
                 df_users['가입일'] = pd.to_datetime(df_users['가입일']).dt.strftime('%Y-%m-%d %H:%M')
                 
                 c1, c2, c3 = st.columns(3)
@@ -877,7 +893,6 @@ if is_admin:
                 
                 st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>👥 전체 가입자 명단 및 등급 변경</h4>", unsafe_allow_html=True)
                 
-                # 관리자용 데이터 에디터 
                 edited_df = st.data_editor(
                     df_users,
                     column_config={
