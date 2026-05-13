@@ -82,37 +82,17 @@ st.markdown("""
     /* 애니메이션 */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     
-    /* 🛠️ [가독성 완벽 패치 2탄] 모든 버튼 스타일링 (폼 제출 버튼, 다운로드 버튼 포함) */
-    .stButton > button, 
-    [data-testid="stFormSubmitButton"] > button,
-    [data-testid="stDownloadButton"] > button,
-    button[kind="primary"], 
-    button[kind="secondary"] { 
-        border-radius: 12px !important; 
-        font-weight: 800 !important; 
-        letter-spacing: 0.5px; 
-        transition: all 0.3s; 
-        background-color: #1e293b !important; 
-        color: #f8fafc !important; 
-        border: 1px solid #38bdf8 !important; 
+    /* 🛠️ 버튼 스타일링 (하얀색 배경 날아가는 문제 해결) */
+    .stButton > button, [data-testid="stFormSubmitButton"] > button, [data-testid="stDownloadButton"] > button, button[kind="primary"], button[kind="secondary"] { 
+        border-radius: 12px !important; font-weight: 800 !important; letter-spacing: 0.5px; transition: all 0.3s; background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #38bdf8 !important; 
     }
     .stButton > button p, [data-testid="stFormSubmitButton"] > button p, [data-testid="stDownloadButton"] > button p { color: inherit !important; }
-    
-    .stButton > button:hover, 
-    [data-testid="stFormSubmitButton"] > button:hover,
-    [data-testid="stDownloadButton"] > button:hover,
-    button[kind="primary"]:hover, 
-    button[kind="secondary"]:hover { 
-        background-color: #38bdf8 !important; 
-        color: #0f172a !important; 
-        border-color: #38bdf8 !important; 
+    .stButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover, [data-testid="stDownloadButton"] > button:hover, button[kind="primary"]:hover, button[kind="secondary"]:hover { 
+        background-color: #38bdf8 !important; color: #0f172a !important; border-color: #38bdf8 !important; 
     }
-    .stButton > button:focus, [data-testid="stFormSubmitButton"] > button:focus {
-        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5) !important;
-        color: #f8fafc !important;
-    }
+    .stButton > button:focus, [data-testid="stFormSubmitButton"] > button:focus { box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5) !important; color: #f8fafc !important; }
     
-    /* 🛠️ [가독성 완벽 패치 1탄] 폼, 입력창 색상 고정 */
+    /* 🛠️ 폼, 입력창, 탭 등 색상 강제 다크모드 */
     label[data-testid="stWidgetLabel"] p { color: #cbd5e1 !important; font-weight: 600 !important; }
     .stTextInput input, .stNumberInput input { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; }
     div[data-baseweb="select"] > div { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; }
@@ -126,8 +106,6 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] p { color: #38bdf8 !important; font-weight: 800 !important; }
     div[data-testid="stCheckbox"] p, div[data-testid="stRadio"] p { color: #f8fafc !important; }
     .stTextInput input:focus, .stNumberInput input:focus, div[data-baseweb="select"] > div:focus-within { border-color: #38bdf8 !important; box-shadow: 0 0 0 1px #38bdf8 !important; }
-    
-    /* 표(Dataframe) 래퍼 테두리 정리 */
     [data-testid="stDataFrame"] > div { border: 1px solid #334155 !important; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
@@ -171,16 +149,30 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                         try:
                             user_ref = db.collection('users').document(login_id)
                             user_doc = user_ref.get()
+                            
+                            # 💡 [핵심 추가] 'admin' 아이디로 로그인 시 자동으로 최고관리자(Admin) 권한 부여
+                            if login_id.lower() == 'admin':
+                                target_tier = 'Admin'
+                            elif login_id.lower() == 'vip':
+                                target_tier = 'VIP'
+                            else:
+                                target_tier = 'Free'
+
                             if user_doc.exists and user_doc.to_dict().get('password') == login_pw:
-                                st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, user_doc.to_dict().get('tier', 'Free')
+                                current_tier = user_doc.to_dict().get('tier', 'Free')
+                                # admin으로 로그인했는데 등급이 Admin이 아니면 자동 업그레이드
+                                if login_id.lower() == 'admin' and current_tier != 'Admin':
+                                    user_ref.update({'tier': 'Admin'})
+                                    current_tier = 'Admin'
+                                st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, current_tier
                             elif not user_doc.exists:
-                                tier = 'VIP' if login_id.lower() == 'vip' else 'Free'
-                                user_ref.set({'password': login_pw, 'tier': tier, 'created_at': datetime.now()})
-                                st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, tier
+                                user_ref.set({'password': login_pw, 'tier': target_tier, 'created_at': datetime.now()})
+                                st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, target_tier
                             st.rerun()
                         except: st.error("DB 오류")
                     else:
-                        st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, 'VIP' if login_id == 'vip' else 'Free'; st.rerun()
+                        tier = 'Admin' if login_id.lower() == 'admin' else ('VIP' if login_id.lower() == 'vip' else 'Free')
+                        st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, tier; st.rerun()
         else:
             st.success(f"환영합니다, **{st.session_state.user_id}**님! (등급: {st.session_state.user_tier})")
             if st.button("로그아웃", use_container_width=True):
@@ -386,7 +378,6 @@ def run_backtest_with_markers(df):
     stats = {'total_trades': len(sells), 'win_rate': (len(wins)/len(sells)*100) if sells else 0, 'total_return': ((balance-10000000)/10000000)*100}
     return stats, {'x': buy_dates, 'y': buy_prices}, {'x': sell_dates, 'y': sell_prices}
 
-# 💡 [핵심 버그 수정] 이전에 누락되었던 현재가 조회 함수 복구!
 @st.cache_data(ttl=3600)
 def get_current_price(ticker):
     try:
@@ -402,8 +393,14 @@ with col_s2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 🎨 탭 스타일링
-tab1, tab2, tab3 = st.tabs(["📊 프로 차트 분석", "💼 포트폴리오 관리", "📡 프리미엄 스크리너"])
+# 💡 [핵심 추가] Admin 권한일 때만 4번째 '회원 관리' 탭 생성
+is_admin = (st.session_state.user_tier == 'Admin')
+tab_titles = ["📊 프로 차트 분석", "💼 포트폴리오 관리", "📡 프리미엄 스크리너"]
+if is_admin: tab_titles.append("🛠️ 회원 관리 (Admin)")
+
+tabs = st.tabs(tab_titles)
+tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
+if is_admin: tab4 = tabs[3]
 
 # -----------------------------------------------------
 # [탭 1] 차트 & 타점 분석 (TradingView 스타일 적용)
@@ -426,16 +423,10 @@ with tab1:
     if df is not None and not df.empty:
         display_df = df.tail(120) 
         
-        # 💎 [10점 만점 패치] TradingView 다크 테마 플롯리 (Plotly Dark)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
-        
-        # Row 1: 주가 및 보조지표 (네온 컬러)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(56, 189, 248, 0.5)', width=1), name='BB 상단'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(56, 189, 248, 0.5)', width=1), fill='tonexty', fillcolor='rgba(56, 189, 248, 0.05)', name='BB 하단'), row=1, col=1)
-        
-        # 캔들스틱 (청록 상승, 빨강 하락)
         fig.add_trace(go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가", increasing_line_color='#26a69a', decreasing_line_color='#ef5350'), row=1, col=1)
-        
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#06b6d4', width=1.5), name='5일선(단기)'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#f59e0b', width=1.5), name='15일선(지지)'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선(추세)'), row=1, col=1)
@@ -446,7 +437,6 @@ with tab1:
         if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', color='#34d399', size=14, line=dict(width=1, color='#1e293b')), name='시스템 매수'), row=1, col=1)
         if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', color='#f87171', size=14, line=dict(width=1, color='#1e293b')), name='시스템 매도'), row=1, col=1)
 
-        # Row 2: 거래량
         colors = ['#26a69a' if row['Close'] >= row['Open'] else '#ef5350' for _, row in display_df.iterrows()]
         fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors, name='거래량'), row=2, col=1)
 
@@ -467,7 +457,6 @@ with tab1:
 
         st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-        # 💎 [10점 만점 패치] 밋밋한 텍스트 대신 '입체형 프리미엄 KPI 카드' 적용
         curr_p = float(df['Close'].iloc[-1])
         ema5 = float(tech_ind['EMA5'])
         entry2 = float(tech_ind['EMA15'])
@@ -552,8 +541,6 @@ with tab1:
                 """
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
-                    
-                    # 💎 [10점 만점 패치] 세련된 대화형 말풍선(Chat Bubble) UI로 출력
                     html_chat = f"""
                     <div class="chat-container">
                         <div class="chat-bubble chat-macro">
@@ -613,7 +600,6 @@ with tab2:
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
 
-    # 💎 [10점 만점 패치] 포트폴리오 요약도 프리미엄 카드로 교체
     html_port_summary = f"""
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px;">
         <div class="kpi-card" style="padding: 15px;">
@@ -687,7 +673,6 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 현재 보유 종목 리스트</h4>", unsafe_allow_html=True)
-        # 💎 [10점 만점 패치] 컬럼 포맷팅 적용
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
                 "종목명": st.column_config.TextColumn("종목명", disabled=True), 
@@ -709,18 +694,10 @@ with tab2:
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
                 with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
                     market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
-                    # 💡 [핵심 버그 수정] 오타(iterrowsiterrows) 수정 완료
                     txt = "\n".join([f"- {r['종목명']} (비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
                     rebalance_prompt = f"""
                     당신은 자산운용 펀드매니저입니다. 고객 투자 성향: '{st.session_state.invest_style}'.
                     아래 [오늘의 실시간 시황], [전체 자산 현황]과 [보유 종목 현황]을 분석하여 리밸런싱(비중 조절) 지시서를 JSON 형태로 작성해 주세요.
-                    
-                    [오늘의 실시간 시황 뉴스]
-                    {market_news}
-
-                    [계좌 자산 현황]
-                    - 총 자산: {int(total_asset_value):,}원 / 보유 예수금: {int(remaining_cash):,}원
-                    - 현재 보유 종목:\n{txt}
                     
                     [분석 수칙]
                     1. '오늘의 실시간 시황 뉴스'를 반드시 반영하여 거시경제 상황에 맞는 액션을 취하세요.
@@ -768,7 +745,7 @@ with tab2:
                     except Exception as e: st.error(f"오류: {e}")
 
 # -----------------------------------------------------
-# [탭 3] 매수 급소 프리미엄 스크리너 (Ag-Grid 대안)
+# [탭 3] 매수 급소 프리미엄 스크리너
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -776,7 +753,7 @@ with tab3:
     send_to_telegram = st.checkbox("📱 스캔 완료 시 내 텔레그램으로 전송", value=True)
     
     if st.button("🔎 딥 스캔 실행 (Deep Scan)", type="primary", use_container_width=True):
-        if "VIP" in mode and st.session_state.user_tier != 'VIP':
+        if "VIP" in mode and st.session_state.user_tier not in ['VIP', 'Admin']:
             st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용 기능</h4><p>사이드바에서 로그인 후 이용해 주세요.</p></div>", unsafe_allow_html=True); st.stop()
             
         with st.spinner("시장 전체 종목을 빅데이터 알고리즘으로 필터링 중입니다... (1~2분 소요)"):
@@ -806,7 +783,6 @@ with tab3:
                             stop_p = entry1 - (a*2)
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
-                            # 💎 [10점 만점 패치] 스크리너 테이블용 깔끔한 데이터 추출
                             res.append({
                                 "종목명": n, 
                                 "시그널": "🔥 강력매수" if sc==4 else "👍 분할매수", 
@@ -825,8 +801,6 @@ with tab3:
             
             if res:
                 df_res = pd.DataFrame(res)
-                
-                # 💎 [10점 만점 패치] 인터랙티브 데이터 그리드 (Ag-Grid 대안 프리미엄 포맷팅)
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
                 is_us = "미국" in mode
@@ -869,3 +843,66 @@ with tab3:
                     st.success("📱 텔레그램 리포트 전송 완료!")
             else: 
                 st.warning("⚠️ 현재 하락장 또는 조정장입니다. 월봉 10선 위 안전한 매수 타점 종목이 없습니다. (현금 보유 권고)")
+
+# -----------------------------------------------------
+# 💡 [핵심 추가] 탭 4: 최고 관리자 전용 회원 관리 시스템
+# -----------------------------------------------------
+if is_admin:
+    with tab4:
+        st.markdown("<h3 style='color: #f8fafc;'>🛠️ 최고 관리자 시스템 (회원 DB 관리)</h3>", unsafe_allow_html=True)
+        st.info("이 탭은 오직 'Admin' 등급의 마스터 계정에게만 노출되는 비밀 탭입니다.")
+        
+        if db:
+            with st.spinner("클라우드에서 유저 데이터를 불러오는 중입니다..."):
+                users_stream = db.collection('users').stream()
+                user_list = []
+                for u in users_stream:
+                    udata = u.to_dict()
+                    user_list.append({
+                        "아이디": u.id,
+                        "등급": udata.get("tier", "Free"),
+                        "가입일": udata.get("created_at", datetime.now()),
+                        "텔레그램ID": udata.get("telegram_chat_id", "미등록")
+                    })
+                
+            if user_list:
+                df_users = pd.DataFrame(user_list)
+                # 날짜 형식 예쁘게 만들기
+                df_users['가입일'] = pd.to_datetime(df_users['가입일']).dt.strftime('%Y-%m-%d %H:%M')
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("총 가입자 수", f"{len(df_users)}명")
+                c2.metric("VIP 회원 수", f"{len(df_users[df_users['등급'] == 'VIP'])}명")
+                c3.metric("일반(Free) 회원 수", f"{len(df_users[df_users['등급'] == 'Free'])}명")
+                
+                st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>👥 전체 가입자 명단 및 등급 변경</h4>", unsafe_allow_html=True)
+                
+                # 관리자용 데이터 에디터 
+                edited_df = st.data_editor(
+                    df_users,
+                    column_config={
+                        "아이디": st.column_config.TextColumn("아이디(이메일)", disabled=True),
+                        "등급": st.column_config.SelectboxColumn("회원 등급 변경", options=["Free", "VIP", "Admin"]),
+                        "가입일": st.column_config.TextColumn("가입일시", disabled=True),
+                        "텔레그램ID": st.column_config.TextColumn("텔레그램 연동", disabled=True)
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                if st.button("💾 회원 등급 변경사항 클라우드에 저장", type="primary"):
+                    with st.spinner("파이어베이스 DB 업데이트 중..."):
+                        updated_count = 0
+                        for i, row in edited_df.iterrows():
+                            orig_tier = df_users.iloc[i]["등급"]
+                            new_tier = row["등급"]
+                            if orig_tier != new_tier:
+                                db.collection('users').document(row["아이디"]).update({"tier": new_tier})
+                                updated_count += 1
+                        st.success(f"✅ 총 {updated_count}명의 회원 등급이 성공적으로 변경되었습니다!")
+                        time.sleep(1)
+                        st.rerun()
+            else:
+                st.warning("아직 가입한 유저가 없습니다.")
+        else:
+            st.error("파이어베이스 DB가 연결되어 있지 않아 회원 관리를 할 수 없습니다.")
