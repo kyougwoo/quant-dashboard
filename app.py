@@ -242,7 +242,8 @@ def get_stock_info(query):
     fallback = {
         "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
-        "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220"
+        "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220",
+        "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270"
     }
     
     if query in fallback: return query, fallback[query]
@@ -284,13 +285,34 @@ def get_financial_summary(ticker):
 def get_top_200_stocks():
     try:
         df = load_krx_data()
-        if df.empty: df = fdr.StockListing('KOSPI')
+        if not df.empty and 'Market' in df.columns:
+            df = df[df['Market'].str.contains('KOSPI', na=False)]
+        else:
+            df = fdr.StockListing('KOSPI')
+            
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
         df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {"삼성전자":"005930", "SK하이닉스":"000660"}
+
+# 💡 [핵심 추가] 코스닥 전용 스크리닝 함수 추가
+@st.cache_data(ttl=86400)
+def get_kosdaq_top_200_stocks():
+    try:
+        df = load_krx_data()
+        if not df.empty and 'Market' in df.columns:
+            df = df[df['Market'].str.contains('KOSDAQ', na=False)]
+        else:
+            df = fdr.StockListing('KOSDAQ')
+            
+        col = 'Code' if 'Code' in df.columns else 'Symbol'
+        df[col] = df[col].astype(str).str.zfill(6)
+        df = df[df[col].str.match(r'^\d{6}$')]
+        df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
+        return dict(zip(df.head(200)['Name'], df.head(200)[col]))
+    except: return {"에코프로비엠":"247540", "알테오젠":"196170", "HLB":"028300"}
 
 @st.cache_data(ttl=86400)
 def get_us_top_stocks():
@@ -653,7 +675,6 @@ with tab2:
             fig_b.update_layout(title_text="종목별 수익률 현황", height=280, margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showticklabels=False), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_b, use_container_width=True, config={'displayModeBar': False})
 
-    # 💡 [핵심 추가] 오류 수정용 '삭제' 탭이 추가되었습니다!
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 종목 매수 (추가)", "💰 종목 매도 (수익 실현)", "🗑️ 기록 삭제 (오류 수정)"])
     
     with buy_tab:
@@ -691,7 +712,6 @@ with tab2:
         else:
             st.info("매도할 보유 종목이 없습니다.")
 
-    # 💡 [핵심 추가] 잘못 입력된 기록을 실현손익 반영 없이 깔끔하게 지우는 기능
     with del_tab:
         if not dis_df.empty:
             with st.form("delete_form"):
@@ -788,7 +808,9 @@ with tab2:
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
-    mode = st.radio("시장 스캔 모드 선택", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"], horizontal=True)
+    
+    # 💡 [핵심 추가] '한국 코스닥 상위 200종목' 옵션이 추가되었습니다!
+    mode = st.radio("시장 스캔 모드 선택", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🚀 한국 코스닥 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"], horizontal=True)
     send_to_telegram = st.checkbox("📱 스캔 완료 시 내 텔레그램으로 전송", value=True)
     
     if st.button("🔎 딥 스캔 실행 (Deep Scan)", type="primary", use_container_width=True):
@@ -798,6 +820,7 @@ with tab3:
         with st.spinner("시장 전체 종목을 빅데이터 알고리즘으로 필터링 중입니다... (1~2분 소요)"):
             if "한국 우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "NAVER":"035420", "카카오":"035720"}
             elif "한국 코스피" in mode: sl = get_top_200_stocks()
+            elif "한국 코스닥" in mode: sl = get_kosdaq_top_200_stocks() # 💡 코스닥 스크리닝 함수 연결!
             else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
