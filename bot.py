@@ -34,10 +34,41 @@ def get_recent_news(keyword):
         return [item.title.text for item in soup.find_all('item')[:3] if item.title]
     except: return []
 
+# 💡 [핵심 추가] 전체 시장 종목 불러오기 로직 (코스피 + 코스닥)
+def load_krx_data():
+    try:
+        return fdr.StockListing('KRX')
+    except:
+        return pd.DataFrame()
+
+def get_screener_target_stocks():
+    sl = {}
+    try:
+        df = load_krx_data()
+        if not df.empty and 'Market' in df.columns:
+            kospi_df = df[df['Market'].str.contains('KOSPI', na=False)]
+            kosdaq_df = df[df['Market'].str.contains('KOSDAQ', na=False)]
+        else:
+            kospi_df = fdr.StockListing('KOSPI')
+            kosdaq_df = fdr.StockListing('KOSDAQ')
+            
+        for d in [kospi_df, kosdaq_df]:
+            col = 'Code' if 'Code' in d.columns else 'Symbol'
+            d[col] = d[col].astype(str).str.zfill(6)
+            d = d[d[col].str.match(r'^\d{6}$')]
+            d = d[~d['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
+            
+            # 각각 상위 100개씩 추출 (총 200종목)
+            top_stocks = dict(zip(d.head(100)['Name'], d.head(100)[col]))
+            sl.update(top_stocks)
+    except:
+        sl = {"삼성전자":"005930", "SK하이닉스":"000660", "현대차":"005380", "NAVER":"035420", "알테오젠":"196170", "에코프로비엠":"247540"}
+    
+    return sl
+
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
     
-    # 💡 [에러 방지] 캔버스(app.py)에 적용했던 데이터 정수기 로직 추가
     df = df[~df.index.duplicated(keep='first')] 
     df = df.dropna(subset=['Close'])
     
@@ -64,7 +95,6 @@ def calculate_cloud_indicators(df):
     recent_60 = df.tail(60)
     vol_ref_price = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
     
-    # 💡 [에러 방지] ATR 벡터화 연산 도입
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift(1)).abs()
     low_close = (df['Low'] - df['Close'].shift(1)).abs()
@@ -80,6 +110,7 @@ def calculate_cloud_indicators(df):
     
     indicators = {
         "EMA15": float(latest['EMA15']),
+        "EMA5": float(latest['EMA5']),
         "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
         "BB_Is_Squeeze": is_squeeze,
         "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
@@ -180,24 +211,31 @@ def run_morning_briefing():
 # --- 4. 오후 스크리너 (오후 4시) ---
 def run_afternoon_screener():
     print("🔍 [오후 타점 스크리너 기동 시작]")
-    sl = {"삼성전자":"005930", "SK하이닉스":"000660", "LG에너지솔루션":"373220", "현대차":"005380", "기아":"000270", "KB금융":"105560", "POSCO홀딩스":"005490", "NAVER":"035420", "알테오젠":"196170"}
+    
+    # 💡 [핵심 추가] 텔레그램 봇도 코스피 Top 100 + 코스닥 Top 100 (총 200종목)을 스캔합니다!
+    sl = get_screener_target_stocks()
+    print(f"📊 총 {len(sl)}개 종목 스캔을 시작합니다...")
     
     res_list = []
-    for n, c in sl.items():
+    for i, (n, c) in enumerate(sl.items()):
+        if i % 20 == 0: print(f"진행 중... ({i}/{len(sl)})")
         try:
-            df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+            df = fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, ind = calculate_cloud_indicators(df)
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                 is_macd_bullish = ind['MACD_Cross']
                 is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
                 
-                # 💡 [필터 완화] 스퀴즈가 아니어도 조건 맞으면 보냅니다!
+                # 💡 조건: 클라우드 점수 2 이상, 월봉 안전, MACD/RSI 통과
                 if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
-                    p = float(df['Close'].iloc[-1])
+                    curr_p = float(df['Close'].iloc[-1])
+                    ema5 = float(ind['EMA5'])
+                    entry1 = ema5 if curr_p > ema5 else curr_p
+                    
                     a = float(ind['ATR'])
-                    tar_p = p + (a * 4)
-                    stop_p = p - (a * 2)
+                    tar_p = entry1 + (a * 4)
+                    stop_p = entry1 - (a * 2)
                     entry2 = float(ind['EMA15'])
                     rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                     
@@ -206,7 +244,8 @@ def run_afternoon_screener():
                         "sig": "🔥 강력" if sc==4 else "👍 분할", 
                         "score": sc,
                         "rules": ind["Cloud_Rules"],
-                        "price": p,
+                        "price": curr_p,
+                        "entry1": entry1,
                         "entry2": entry2,
                         "target": tar_p,
                         "stop": stop_p,
@@ -215,26 +254,33 @@ def run_afternoon_screener():
                         "macd": "골든크로스" if is_macd_bullish else "데드크로스",
                         "is_squeeze": ind.get("BB_Is_Squeeze", False)
                     })
-            time.sleep(0.5)
+            time.sleep(0.3)
         except: pass
         
     # 스퀴즈 종목이 맨 위로 오도록 정렬
     res_list.sort(key=lambda x: (x['is_squeeze'], x['score']), reverse=True)
     
-    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n\n"
+    # 텔레그램 메시지 포맷팅
+    msg = f"🚀 <b>[클라우드 스크리너 마감 보고]</b>\n\n총 {len(res_list)}개 타점 종목 발견!\n(코스피/코스닥 Top 200 스캔 완료)\n\n"
     for r in res_list: 
         rule_details = ", ".join([f"✅{k.split('(')[0]}" if v else f"❌{k.split('(')[0]}" for k, v in r['rules'].items()])
-        
-        # 💡 [강조 표시] 스퀴즈인 녀석은 눈에 확 띄게!
         bb_stat = "🚨스퀴즈(응축 폭발전야!)🚨" if r['is_squeeze'] else "확장"
         
-        msg += f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
-        msg += f" └ ☁️ <b>조건:</b> {rule_details}\n"
-        msg += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {bb_stat}\n"
-        msg += f" └ 🎯 <b>매수:</b> 1차 {int(r['price']):,}원 / 2차 {int(r['entry2']):,}원\n"
-        msg += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
-        msg += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
-        msg += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['rr_2']:.1f}배 극대화\n\n"
+        info = f"🔥 <b>{r['name']}</b> ({r['sig']})\n"
+        info += f" └ ☁️ <b>조건:</b> {rule_details}\n"
+        info += f" └ 📊 <b>RSI:</b> {r['rsi']:.1f} | <b>MACD:</b> {r['macd']} | <b>BB:</b> {bb_stat}\n"
+        info += f" └ 🎯 <b>매수대기:</b> 1차 {int(r['entry1']):,}원 (현재 {int(r['price']):,}원)\n"
+        info += f" └ 🎯 <b>목표:</b> {int(r['target']):,}원\n"
+        info += f" └ 🛡️ <b>손절:</b> {int(r['stop']):,}원\n"
+        info += f" └ ⚖️ <b>손익비(매력도):</b> 2차 진입시 {r['rr_2']:.1f}배 극대화\n\n"
+        
+        # 텔레그램 메시지 길이 제한(약 4000자) 방어
+        if len(msg) + len(info) > 3800:
+            send_telegram(msg)
+            time.sleep(0.5)
+            msg = info
+        else:
+            msg += info
         
     if not res_list: msg += "월봉 10선 위 안전하며 매수 조건에 맞는 종목이 오늘은 없습니다."
     
