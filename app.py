@@ -115,13 +115,22 @@ def init_db():
     try:
         raw_s = str(st.secrets.get("FIREBASE_JSON", st.secrets.get("firebase", "")))
         if not raw_s: return None, "❌ 설정창(Secrets) 비어있음."
-        pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
-        em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
-        pk_raw = raw_s[raw_s.find("-----BEGIN PRIVATE KEY-----") : raw_s.find("-----END PRIVATE KEY-----") + 25]
-        pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
-        private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
-        creds = service_account.Credentials.from_service_account_info({"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"})
-        return firestore.Client(credentials=creds, project=pm.group(1)), "✅ 연결 성공"
+        
+        # 💡 [버그 수정] JSON 형식을 안전하게 파싱하도록 개선
+        try:
+            creds_dict = json.loads(raw_s, strict=False)
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+            creds = service_account.Credentials.from_service_account_info(creds_dict)
+            return firestore.Client(credentials=creds, project=creds_dict.get("project_id")), "✅ 연결 성공"
+        except:
+            pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
+            em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
+            pk_raw = raw_s[raw_s.find("-----BEGIN PRIVATE KEY-----") : raw_s.find("-----END PRIVATE KEY-----") + 25]
+            pk_body = re.sub(r'[^a-zA-Z0-9+/=]', '', pk_raw.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
+            private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
+            creds = service_account.Credentials.from_service_account_info({"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"})
+            return firestore.Client(credentials=creds, project=pm.group(1)), "✅ 연결 성공"
     except Exception as e: return None, f"❌ 접속 거부: {e}"
 
 if 'db_client' not in st.session_state:
@@ -262,18 +271,6 @@ def get_stock_info(query):
     return None, None
 
 @st.cache_data(ttl=86400)
-def get_financial_summary(ticker):
-    if not str(ticker).isdigit(): return "해외주식은 기본적 분석 대신 기술적 지표에 집중합니다."
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        per = soup.select_one('#_per').text if soup.select_one('#_per') else "N/A"
-        pbr = soup.select_one('#_pbr').text if soup.select_one('#_pbr') else "N/A"
-        return f"PER: {per} / PBR: {pbr}"
-    except: return "수집 오류"
-
-@st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
         df = load_krx_data()
@@ -330,6 +327,7 @@ def get_ai_analysis(prompt, api_key):
             if attempt < 4: time.sleep(2); continue
             raise e
 
+# 💡 [정밀화 패치 적용] 웹 대시보드 엔진에도 RSI / MACD 정밀 지표 추가
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
     df = df[~df.index.duplicated(keep='first')] 
@@ -348,8 +346,10 @@ def calculate_cloud_indicators(df):
     
     delta = df['Close'].diff()
     df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
+    
     df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal'] # 💡 히스토그램 추가
     
     recent_60 = df.tail(60)
     df['Vol_Ref_Price'] = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
@@ -363,14 +363,20 @@ def calculate_cloud_indicators(df):
     try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
     except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
     
-    latest, prev = df.iloc[-1], df.iloc[-2]
+    latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
     is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
+    
+    # 💡 정밀 로직 적용
+    macd_early_entry = (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist'])
+    rsi_turnaround = (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI'])
     
     indicators = {
         "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
         "BB_Upper": float(latest['BB_Upper']) if not pd.isna(latest['BB_Upper']) else 0.0, "BB_Lower": float(latest['BB_Lower']) if not pd.isna(latest['BB_Lower']) else 0.0, "BB_Is_Squeeze": is_squeeze,
         "Monthly_EMA10": current_monthly_ema10, "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
         "RSI": float(latest['RSI']), "MACD": float(latest['MACD']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
+        "MACD_Early_Entry": macd_early_entry,
+        "RSI_Turnaround": rsi_turnaround,
         "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
     }
     return df, indicators
@@ -527,13 +533,16 @@ with tab1:
                 
                 rsi_val = tech_ind.get('RSI', 50)
                 rsi_color = "#f87171" if rsi_val >= 70 else "#38bdf8" if rsi_val <= 30 else "#cbd5e1"
-                macd_cross = "🟢 골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴 데드크로스(매도)"
+                
+                # 💡 [정밀화 패치] 대시보드 지표 화면에도 선취매/턴어라운드 정보 표시
+                macd_state = "🚀 MACD 선취매 턴어라운드 포착!" if tech_ind.get('MACD_Early_Entry') else ("🟢 정통 골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴 데드크로스(매도)")
+                rsi_state = "📉 RSI 과매도 바닥 턴어라운드 포착!" if tech_ind.get('RSI_Turnaround') else f"{rsi_val:.1f}"
                 bb_sig = "📉 스퀴즈 (응축 폭발전야!)" if tech_ind.get('BB_Is_Squeeze') else "📈 일반 확장"
                 
                 st.markdown(f"""
                 <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-top: 15px; border-left: 4px solid #3b82f6;'>
-                    <div style='margin-bottom: 8px;'><b>RSI (14):</b> <span style='color: {rsi_color}; font-weight: bold;'>{rsi_val:.1f}</span></div>
-                    <div style='margin-bottom: 8px;'><b>MACD:</b> {macd_cross}</div>
+                    <div style='margin-bottom: 8px;'><b>RSI (14):</b> <span style='color: {rsi_color}; font-weight: bold;'>{rsi_state}</span></div>
+                    <div style='margin-bottom: 8px;'><b>MACD:</b> {macd_state}</div>
                     <div><b>볼린저밴드:</b> <span style='color: #fbbf24;'>{bb_sig}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -562,8 +571,8 @@ with tab1:
                 prompt = f"""
                 당신은 'Harness 4-Agent' 기반의 최고 수준 퀀트 투자 시스템입니다. 성향: {st.session_state.invest_style}
                 종목: {actual_name}, 뉴스: {get_recent_news(actual_name)[:3]}, 월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험'}
-                RSI: {tech_ind['RSI']:.1f}, MACD: {'골든크로스' if tech_ind['MACD_Cross'] else '데드크로스'}, 손절가: {format_price(stop_p, ticker)}
-                RSI 70 이상 및 MACD 데드크로스 시 강력 매도 권고. 출력 형식(JSON): {{"macroAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
+                RSI: {tech_ind['RSI']:.1f}, MACD 조기턴어라운드: {'포착됨' if tech_ind.get('MACD_Early_Entry') else '아님'}, 손절가: {format_price(stop_p, ticker)}
+                RSI 70 이상 및 추세 하락 시 강력 매도 권고. 출력 형식(JSON): {{"macroAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "technicalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "fundamentalAgent": {{"score": 0~100 사이의 정수, "reasoning": "..."}}, "riskManager": {{"action": "매수/관망/매도", "positionSize": "비중", "reasoning": "..."}}}}
                 """
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
@@ -738,7 +747,6 @@ with tab2:
                 if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
                 with st.spinner("계좌 자금 흐름과 실시간 거시경제 시황을 통합 분석 중입니다..."):
                     market_news = get_recent_news("글로벌 경제 증시 시황") + get_recent_news("미국 증시 주요 이슈")
-                    # 💡 [핵심 버그 수정 완료] AI가 환각(상상)을 하지 못하도록 실제 보유 종목 데이터를 프롬프트에 다시 정상적으로 전달합니다!
                     txt = "\n".join([f"- {r['종목명']} (매수단가: {r['매수단가']}원, 수량: {r['수량']}주, 현재가: {r['현재가']}원, 비중: {(r['현재가']*r['수량'])/total_asset_value*100:.1f}%, 수익률: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
                     
                     rebalance_prompt = f"""
@@ -799,7 +807,7 @@ with tab2:
                     except Exception as e: st.error(f"오류: {e}")
 
 # -----------------------------------------------------
-# [탭 3] 매수 급소 프리미엄 스크리너
+# [탭 3] 매수 급소 프리미엄 스크리너 (정밀화 로직 반영)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -824,10 +832,11 @@ with tab3:
                     df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
                     if ind:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
-                        is_macd_bullish = ind['MACD_Cross']
-                        is_rsi_good = (ind['RSI'] > 50) or (ind['RSI'] <= 35)
                         
-                        if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_macd_bullish and is_rsi_good:
+                        # 💡 [정밀 필터링 적용]
+                        is_smart_entry = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
+                        
+                        if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_smart_entry:
                             curr_p = float(df['Close'].iloc[-1])
                             ema5 = float(ind['EMA5'])
                             entry2 = float(ind['EMA15'])
@@ -838,21 +847,27 @@ with tab3:
                             stop_p = entry1 - (a*2)
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
                             
+                            # 어떤 시그널로 잡혔는지 태그 달기
+                            sig_tags = []
+                            if ind['MACD_Early_Entry']: sig_tags.append("🚀MACD선취매")
+                            if ind['RSI_Turnaround']: sig_tags.append("📉RSI턴어라운드")
+                            if ind['MACD_Cross']: sig_tags.append("🟢정통골든크로스")
+                            
                             res.append({
                                 "종목명": n, 
-                                "시그널": "🔥 강력매수" if sc==4 else "👍 분할매수", 
+                                "시그널": "🔥 강력매수" if sc>=3 else "👍 분할매수",
+                                "포착원인": " + ".join(sig_tags), # 💡 추가됨!
                                 "현재가": curr_p, 
                                 "1차타점(대기)": entry1,
                                 "목표가": tar_p, 
                                 "손절가": stop_p, 
                                 "손익비(배)": rr_2,
                                 "RSI": ind['RSI'],
-                                "MACD": "🟢 골든" if is_macd_bullish else "🔴 데드",
                                 "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
                             })
                 except: pass
                 bar.progress((i+1)/len(sl))
-            txt.text("✅ 빅데이터 스캔 완료!")
+            txt.text("✅ 빅데이터 스마트 스캔 완료!")
             
             if res:
                 df_res = pd.DataFrame(res)
@@ -865,6 +880,7 @@ with tab3:
                     column_config={
                         "종목명": st.column_config.TextColumn("종목명", width="medium"),
                         "시그널": st.column_config.TextColumn("AI 시그널"),
+                        "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"), # 💡 추가됨!
                         "현재가": st.column_config.NumberColumn("현재가", format=currency_format),
                         "1차타점(대기)": st.column_config.NumberColumn("1차 매수(대기)", format=currency_format),
                         "목표가": st.column_config.NumberColumn("목표가", format=currency_format),
@@ -887,7 +903,8 @@ with tab3:
                             curr_p = f"{int(r['현재가']):,}원"; tar_p = f"{int(r['목표가']):,}원"; stop_p = f"{int(r['손절가']):,}원"; entry1_p = f"{int(r['1차타점(대기)']):,}원"
 
                         info = f"<b>{r['종목명']}</b> ({r['시그널']})\n"
-                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>MACD:</b> {r['MACD']} | <b>BB:</b> {r['볼린저상태']}\n"
+                        info += f" └ ✨ <b>포착원인:</b> {r['포착원인']}\n"
+                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>BB:</b> {r['볼린저상태']}\n"
                         info += f" └ 🎯 <b>매수대기:</b> {entry1_p} (현재 {curr_p})\n"
                         info += f" └ 🎯 <b>목표:</b> {tar_p} / 🛡️ <b>손절:</b> {stop_p}\n\n"
                         
