@@ -259,7 +259,7 @@ def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
     
-    # 💡 자주 검색하는 종목 및 검색 오류 방지망
+    # 💡 1. 자주 검색하는 종목 및 검색 오류 방지망
     fallback = {
         "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
@@ -271,10 +271,25 @@ def get_stock_info(query):
     for k, v in fallback.items():
         if v == query: return k, v
         
+    # 💡 2. 네이버 금융 자동완성 API (강력한 부분검색, 오타교정, KRX 차단 회피)
+    try:
+        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        res = requests.get(url, timeout=3)
+        data = res.json()
+        items = data.get('items', [[]])[0]
+        if items and len(items) > 0:
+            for item in items:
+                name = item[0]
+                code = item[1]
+                if str(code).isdigit() and len(str(code)) == 6:
+                    return name, str(code)
+    except:
+        pass
+        
+    # 💡 3. 최후의 보루 (FDR 전체 종목 스캔)
     try:
         df_krx = load_krx_data()
         if df_krx is not None and not df_krx.empty:
-            # 💡 [핵심 버그 수정] 종목명이나 코드 컬럼이 한글/영문 혼용될 경우를 대비한 강력한 맵핑
             col_map = {}
             for c in df_krx.columns:
                 cu = str(c).upper()
@@ -294,7 +309,7 @@ def get_stock_info(query):
                 if not match.empty: 
                     return match['Name'].values[0], str(match['Code'].values[0]).replace('.0', '').zfill(6)
                 
-                match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
+                match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False, regex=False)]
                 if not match_partial.empty: 
                     best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
                     return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
