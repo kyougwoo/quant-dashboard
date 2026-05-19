@@ -234,7 +234,7 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_krx_data():
     try:
         df = fdr.StockListing('KRX-DESC')
@@ -265,19 +265,28 @@ def get_stock_info(query):
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
         "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220",
         "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270", "아난티":"025980",
-        "LG전자":"066570", "LG화학":"051910", "삼성SDI":"006400"
+        "LG전자":"066570", "LG화학":"051910", "삼성SDI":"006400", "영풍":"000670", "고려아연":"010130"
     }
     if query in fallback: return query, fallback[query]
     for k, v in fallback.items():
         if v == query: return k, v
         
     # 💡 2. 네이버 금융 자동완성 API (강력한 부분검색, 오타교정, KRX 차단 회피)
+    # [핵심 수술] 네이버 서버가 봇을 차단하지 못하도록 브라우저(크롬)로 위장하는 Header 추가
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        res = requests.get(url, timeout=3)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        res = requests.get(url, headers=headers, timeout=3)
         data = res.json()
         items = data.get('items', [[]])[0]
+        
         if items and len(items) > 0:
+            # 1순위: '영풍' 처럼 정확히 일치하는 이름을 가장 먼저 낚아챔
+            for item in items:
+                if item[0].replace(" ", "").upper() == query.replace(" ", "").upper() and str(item[1]).isdigit() and len(str(item[1])) == 6:
+                    return item[0], str(item[1])
+            
+            # 2순위: 정확히 일치하지 않으면 가장 위에 뜬 검색결과를 반환
             for item in items:
                 name = item[0]
                 code = item[1]
