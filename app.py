@@ -234,63 +234,70 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 [핵심 버그 수정 1] 클라우드 서버 IP 차단(KRX) 대비 및 결측치 에러 완벽 방어
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
     try:
-        # 1순위: KOSPI와 KOSDAQ을 분리해서 호출 후 병합 (클라우드 IP 차단 우회용)
-        df_kospi = fdr.StockListing('KOSPI')
-        df_kosdaq = fdr.StockListing('KOSDAQ')
-        df_combined = pd.concat([df_kospi, df_kosdaq], ignore_index=True)
-        if not df_combined.empty:
-            return df_combined
+        df = fdr.StockListing('KRX-DESC')
+        if not df.empty: return df
     except: pass
     
-    # 2순위: 기존 KRX 통합 호출
-    df = fdr.StockListing('KRX')
-    if df is None or df.empty:
-        raise ValueError("데이터 로드 실패") # 에러를 발생시켜 캐시되지 않도록 함
-    return df
+    try:
+        kpi = fdr.StockListing('KOSPI')
+        kdq = fdr.StockListing('KOSDAQ')
+        df = pd.concat([kpi, kdq], ignore_index=True)
+        if not df.empty: return df
+    except: pass
+    
+    try:
+        df = fdr.StockListing('KRX')
+        if not df.empty: return df
+    except: pass
+    
+    raise ValueError("데이터 로드 실패")
 
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
     
-    # 대표적인 종목들 안전망(아난티 추가)
+    # 💡 자주 검색하는 종목 및 검색 오류 방지망
     fallback = {
         "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
         "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220",
-        "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270", "아난티":"025980"
+        "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270", "아난티":"025980",
+        "LG전자":"066570", "LG화학":"051910", "삼성SDI":"006400"
     }
     if query in fallback: return query, fallback[query]
     for k, v in fallback.items():
         if v == query: return k, v
         
     try:
-        try:
-            df_krx = load_krx_data()
-        except:
-            df_krx = fdr.StockListing('KRX') # 캐시 실패시 실시간으로 재시도
-            
+        df_krx = load_krx_data()
         if df_krx is not None and not df_krx.empty:
-            # 💡 [핵심 버그 수정 2] 종목명에 빈 값(NaN)이 있을 때 에러나는 현상 방어 (.astype(str) 추가)
-            col_name = 'Code' if 'Code' in df_krx.columns else 'Symbol'
+            # 💡 [핵심 버그 수정] 종목명이나 코드 컬럼이 한글/영문 혼용될 경우를 대비한 강력한 맵핑
+            col_map = {}
+            for c in df_krx.columns:
+                cu = str(c).upper()
+                if cu in ['SYMBOL', 'CODE', '종목코드', '단축코드']: col_map[c] = 'Code'
+                elif cu in ['NAME', '종목명', '회사명']: col_map[c] = 'Name'
+            df_krx = df_krx.rename(columns=col_map)
             
-            df_krx['Name_NoSpace'] = df_krx['Name'].astype(str).str.replace(" ", "").str.upper()
-            if query.isdigit() and len(query) == 6:
-                match = df_krx[df_krx[col_name].astype(str).str.zfill(6) == query]
-                if not match.empty: return match['Name'].values[0], query
+            if 'Name' in df_krx.columns and 'Code' in df_krx.columns:
+                df_krx['Name_NoSpace'] = df_krx['Name'].astype(str).str.replace(" ", "").str.upper()
+                query_nospace = query.replace(" ", "")
                 
-            query_nospace = query.replace(" ", "")
-            match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
-            if not match.empty: 
-                return match['Name'].values[0], str(match[col_name].values[0]).zfill(6)
-            
-            match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
-            if not match_partial.empty: 
-                best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
-                return best['Name'], str(best[col_name]).zfill(6)
+                if query.isdigit() and len(query) == 6:
+                    match = df_krx[df_krx['Code'].astype(str).str.zfill(6) == query]
+                    if not match.empty: return match['Name'].values[0], query
+                    
+                match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
+                if not match.empty: 
+                    return match['Name'].values[0], str(match['Code'].values[0]).replace('.0', '').zfill(6)
+                
+                match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
+                if not match_partial.empty: 
+                    best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
+                    return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
     except Exception as e: 
         pass
         
@@ -837,7 +844,7 @@ with tab2:
                     except Exception as e: st.error(f"오류: {e}")
 
 # -----------------------------------------------------
-# [탭 3] 매수 급소 프리미엄 스크리너 (정밀화 로직 반영)
+# [탭 3] 매 매수 급소 프리미엄 스크리너 (정밀화 로직 반영)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
