@@ -234,9 +234,19 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 [핵심 버그 수정 1] 오류 발생 시 24시간 동안 캐시(기억)되지 않도록 방어 로직 추가
+# 💡 [핵심 버그 수정 1] 클라우드 서버 IP 차단(KRX) 대비 및 결측치 에러 완벽 방어
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
+    try:
+        # 1순위: KOSPI와 KOSDAQ을 분리해서 호출 후 병합 (클라우드 IP 차단 우회용)
+        df_kospi = fdr.StockListing('KOSPI')
+        df_kosdaq = fdr.StockListing('KOSDAQ')
+        df_combined = pd.concat([df_kospi, df_kosdaq], ignore_index=True)
+        if not df_combined.empty:
+            return df_combined
+    except: pass
+    
+    # 2순위: 기존 KRX 통합 호출
     df = fdr.StockListing('KRX')
     if df is None or df.empty:
         raise ValueError("데이터 로드 실패") # 에러를 발생시켜 캐시되지 않도록 함
@@ -245,11 +255,13 @@ def load_krx_data():
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
+    
+    # 대표적인 종목들 안전망(아난티 추가)
     fallback = {
         "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", 
         "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "HMM":"011200", 
         "에코프로":"086520", "포스코홀딩스":"005490", "POSCO홀딩스":"005490", "LG에너지솔루션":"373220",
-        "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270"
+        "에코프로비엠":"247540", "HLB":"028300", "엔켐":"261040", "셀트리온":"068270", "아난티":"025980"
     }
     if query in fallback: return query, fallback[query]
     for k, v in fallback.items():
@@ -261,24 +273,27 @@ def get_stock_info(query):
         except:
             df_krx = fdr.StockListing('KRX') # 캐시 실패시 실시간으로 재시도
             
-        if not df_krx.empty:
-            # 💡 [핵심 버그 수정 2] 종목코드 컬럼명이 'Code' 였다가 'Symbol'로 바뀌는 이슈 완벽 방어
+        if df_krx is not None and not df_krx.empty:
+            # 💡 [핵심 버그 수정 2] 종목명에 빈 값(NaN)이 있을 때 에러나는 현상 방어 (.astype(str) 추가)
             col_name = 'Code' if 'Code' in df_krx.columns else 'Symbol'
             
-            df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
+            df_krx['Name_NoSpace'] = df_krx['Name'].astype(str).str.replace(" ", "").str.upper()
             if query.isdigit() and len(query) == 6:
-                match = df_krx[df_krx[col_name] == query]
+                match = df_krx[df_krx[col_name].astype(str).str.zfill(6) == query]
                 if not match.empty: return match['Name'].values[0], query
                 
             query_nospace = query.replace(" ", "")
             match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
-            if not match.empty: return match['Name'].values[0], match[col_name].values[0]
+            if not match.empty: 
+                return match['Name'].values[0], str(match[col_name].values[0]).zfill(6)
             
             match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
             if not match_partial.empty: 
                 best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
-                return best['Name'], best[col_name]
-    except: pass
+                return best['Name'], str(best[col_name]).zfill(6)
+    except Exception as e: 
+        pass
+        
     if re.match(r'^[A-Z0-9\.]+$', query): return query, query
     return None, None
 
