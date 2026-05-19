@@ -116,7 +116,6 @@ def init_db():
         raw_s = str(st.secrets.get("FIREBASE_JSON", st.secrets.get("firebase", "")))
         if not raw_s: return None, "❌ 설정창(Secrets) 비어있음."
         
-        # 💡 [버그 수정] JSON 형식을 안전하게 파싱하도록 개선
         try:
             creds_dict = json.loads(raw_s, strict=False)
             if "private_key" in creds_dict:
@@ -235,10 +234,13 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-@st.cache_data(ttl=86400)
+# 💡 [핵심 버그 수정 1] 오류 발생 시 24시간 동안 캐시(기억)되지 않도록 방어 로직 추가
+@st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
-    try: return fdr.StockListing('KRX')
-    except: return pd.DataFrame()
+    df = fdr.StockListing('KRX')
+    if df is None or df.empty:
+        raise ValueError("데이터 로드 실패") # 에러를 발생시켜 캐시되지 않도록 함
+    return df
 
 def get_stock_info(query):
     query = str(query).strip().upper()
@@ -252,20 +254,30 @@ def get_stock_info(query):
     if query in fallback: return query, fallback[query]
     for k, v in fallback.items():
         if v == query: return k, v
+        
     try:
-        df_krx = load_krx_data()
+        try:
+            df_krx = load_krx_data()
+        except:
+            df_krx = fdr.StockListing('KRX') # 캐시 실패시 실시간으로 재시도
+            
         if not df_krx.empty:
+            # 💡 [핵심 버그 수정 2] 종목코드 컬럼명이 'Code' 였다가 'Symbol'로 바뀌는 이슈 완벽 방어
+            col_name = 'Code' if 'Code' in df_krx.columns else 'Symbol'
+            
             df_krx['Name_NoSpace'] = df_krx['Name'].str.replace(" ", "").str.upper()
             if query.isdigit() and len(query) == 6:
-                match = df_krx[df_krx['Code'] == query]
+                match = df_krx[df_krx[col_name] == query]
                 if not match.empty: return match['Name'].values[0], query
+                
             query_nospace = query.replace(" ", "")
             match = df_krx[df_krx['Name_NoSpace'] == query_nospace]
-            if not match.empty: return match['Name'].values[0], match['Code'].values[0]
+            if not match.empty: return match['Name'].values[0], match[col_name].values[0]
+            
             match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query_nospace, na=False)]
             if not match_partial.empty: 
                 best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
-                return best['Name'], best['Code']
+                return best['Name'], best[col_name]
     except: pass
     if re.match(r'^[A-Z0-9\.]+$', query): return query, query
     return None, None
@@ -273,9 +285,12 @@ def get_stock_info(query):
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
-        df = load_krx_data()
+        try: df = load_krx_data()
+        except: df = fdr.StockListing('KOSPI')
+        
         if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSPI', na=False)]
         else: df = fdr.StockListing('KOSPI')
+        
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
@@ -286,9 +301,12 @@ def get_top_200_stocks():
 @st.cache_data(ttl=86400)
 def get_kosdaq_top_200_stocks():
     try:
-        df = load_krx_data()
+        try: df = load_krx_data()
+        except: df = fdr.StockListing('KOSDAQ')
+        
         if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSDAQ', na=False)]
         else: df = fdr.StockListing('KOSDAQ')
+        
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
@@ -327,7 +345,6 @@ def get_ai_analysis(prompt, api_key):
             if attempt < 4: time.sleep(2); continue
             raise e
 
-# 💡 [정밀화 패치 적용] 웹 대시보드 엔진에도 RSI / MACD 정밀 지표 추가
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
     df = df[~df.index.duplicated(keep='first')] 
@@ -349,7 +366,7 @@ def calculate_cloud_indicators(df):
     
     df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal'] # 💡 히스토그램 추가
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal'] 
     
     recent_60 = df.tail(60)
     df['Vol_Ref_Price'] = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
@@ -366,7 +383,6 @@ def calculate_cloud_indicators(df):
     latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
     is_squeeze = bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8) if not pd.isna(latest['BB_Width']) else False
     
-    # 💡 정밀 로직 적용
     macd_early_entry = (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist'])
     rsi_turnaround = (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI'])
     
@@ -534,7 +550,6 @@ with tab1:
                 rsi_val = tech_ind.get('RSI', 50)
                 rsi_color = "#f87171" if rsi_val >= 70 else "#38bdf8" if rsi_val <= 30 else "#cbd5e1"
                 
-                # 💡 [정밀화 패치] 대시보드 지표 화면에도 선취매/턴어라운드 정보 표시
                 macd_state = "🚀 MACD 선취매 턴어라운드 포착!" if tech_ind.get('MACD_Early_Entry') else ("🟢 정통 골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴 데드크로스(매도)")
                 rsi_state = "📉 RSI 과매도 바닥 턴어라운드 포착!" if tech_ind.get('RSI_Turnaround') else f"{rsi_val:.1f}"
                 bb_sig = "📉 스퀴즈 (응축 폭발전야!)" if tech_ind.get('BB_Is_Squeeze') else "📈 일반 확장"
@@ -856,7 +871,7 @@ with tab3:
                             res.append({
                                 "종목명": n, 
                                 "시그널": "🔥 강력매수" if sc>=3 else "👍 분할매수",
-                                "포착원인": " + ".join(sig_tags), # 💡 추가됨!
+                                "포착원인": " + ".join(sig_tags),
                                 "현재가": curr_p, 
                                 "1차타점(대기)": entry1,
                                 "목표가": tar_p, 
@@ -880,7 +895,7 @@ with tab3:
                     column_config={
                         "종목명": st.column_config.TextColumn("종목명", width="medium"),
                         "시그널": st.column_config.TextColumn("AI 시그널"),
-                        "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"), # 💡 추가됨!
+                        "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
                         "현재가": st.column_config.NumberColumn("현재가", format=currency_format),
                         "1차타점(대기)": st.column_config.NumberColumn("1차 매수(대기)", format=currency_format),
                         "목표가": st.column_config.NumberColumn("목표가", format=currency_format),
