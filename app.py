@@ -230,6 +230,29 @@ def get_top_200_stocks():
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {"삼성전자":"005930", "SK하이닉스":"000660"}
 
+@st.cache_data(ttl=86400)
+def get_kosdaq_top_200_stocks():
+    try:
+        try: df = load_krx_data()
+        except: df = fdr.StockListing('KOSDAQ')
+        
+        if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSDAQ', na=False)]
+        else: df = fdr.StockListing('KOSDAQ')
+        
+        col = 'Code' if 'Code' in df.columns else 'Symbol'
+        df[col] = df[col].astype(str).str.zfill(6)
+        df = df[df[col].str.match(r'^\d{6}$')]
+        df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
+        return dict(zip(df.head(200)['Name'], df.head(200)[col]))
+    except: return {"에코프로비엠":"247540", "알테오젠":"196170", "HLB":"028300"}
+
+@st.cache_data(ttl=86400)
+def get_us_top_stocks():
+    try:
+        df = fdr.StockListing('S&P500')
+        return dict(zip(df.head(100)['Name'], df.head(100)['Symbol']))
+    except: return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA"}
+
 @st.cache_data(ttl=3600)
 def get_recent_news(keyword):
     try:
@@ -294,6 +317,10 @@ def calculate_cloud_indicators(df):
     return df, indicators
 
 def format_price(price, ticker): return f"{int(price):,}원" if str(ticker).isdigit() else f"${price:,.2f}"
+
+def send_telegram_message(token, chat_id, text):
+    try: return requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
+    except: return False
 
 @st.cache_data(ttl=3600)
 def get_current_price(ticker):
@@ -542,7 +569,8 @@ with tab2:
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
-    mode = st.radio("모드 선택", ["⚡ 우량주 40종목 (무료)", "💎 코스피 상위 200종목 (VIP)", "🚀 코스닥 상위 200종목 (VIP)"], horizontal=True)
+    mode = st.radio("시장 스캔 모드 선택", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🚀 한국 코스닥 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"], horizontal=True)
+    send_to_telegram = st.checkbox("📱 스캔 완료 시 내 텔레그램으로 전송", value=True)
     
     if st.button("🔎 딥 스캔 실행", type="primary", use_container_width=True):
         if "VIP" in mode and st.session_state.user_tier not in ['VIP', 'Admin']:
@@ -551,7 +579,8 @@ with tab3:
         with st.spinner("빅데이터 필터링 중..."):
             if "우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "NAVER":"035420"}
             elif "코스피" in mode: sl = get_top_200_stocks()
-            else: sl = get_kosdaq_top_200_stocks()
+            elif "코스닥" in mode: sl = get_kosdaq_top_200_stocks()
+            else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
             for i, (n, c) in enumerate(sl.items()):
@@ -566,7 +595,13 @@ with tab3:
                             tags = []
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
-                            res.append({"종목명": n, "포착원인": "+".join(tags), "현재가": int(p), "목표가": int(p+(a*4)), "RSI": ind['RSI'], "볼린저": "🚨스퀴즈" if ind["BB_Is_Squeeze"] else "확장"})
+                            
+                            is_us = "미국" in mode
+                            curr_p_str = f"${p:,.2f}" if is_us else f"{int(p):,}원"
+                            tar_p_str = f"${(p+(a*4)):,.2f}" if is_us else f"{int(p+(a*4)):,}원"
+                            stop_p_str = f"${(p-(a*2)):,.2f}" if is_us else f"{int(p-(a*2)):,}원"
+
+                            res.append({"종목명": n, "포착원인": "+".join(tags), "현재가": curr_p_str, "목표가": tar_p_str, "손절가": stop_p_str, "RSI": ind['RSI'], "볼린저": "🚨스퀴즈" if ind["BB_Is_Squeeze"] else "확장"})
                 except: pass
                 bar.progress((i+1)/len(sl))
             txt.text("✅ 스캔 완료!")
@@ -575,6 +610,13 @@ with tab3:
                 df_res = pd.DataFrame(res)
                 st.dataframe(df_res, hide_index=True, use_container_width=True)
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="screener.csv", mime="text/csv")
+                
+                if send_to_telegram and tele_token and tele_chat_id:
+                    msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
+                    for r in res:
+                        msg += f"<b>{r['종목명']}</b>\n └ ✨ 포착: {r['포착원인']}\n └ 🎯 목표: {r['목표가']} / 🛡️ 손절: {r['손절가']}\n\n"
+                    send_telegram_message(tele_token, tele_chat_id, msg)
+                    st.success("📱 텔레그램 전송 완료!")
             else: st.warning("월봉 10선 위 안전한 타점이 없습니다.")
 
 # -----------------------------------------------------
