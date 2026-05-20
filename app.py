@@ -14,7 +14,7 @@ import time
 import re
 import textwrap
 
-# 💎 [10점 만점 패치] 강제 딥 다크 테마 세팅 엔진
+# 💎 강제 딥 다크 테마 세팅 엔진
 theme_config = """[theme]
 base='dark'
 primaryColor='#38bdf8'
@@ -33,7 +33,7 @@ if write_config:
     with open(config_path, "w") as f:
         f.write(theme_config)
 
-# 💡 Firebase 클라우드 DB 연결 (기존 기능 100% 보존)
+# 💡 Firebase 클라우드 DB 연결
 FIREBASE_IMPORT_ERROR = ""
 try:
     from google.cloud import firestore
@@ -45,7 +45,7 @@ except ImportError as e:
 
 st.set_page_config(page_title="클라우드 퀀트 PRO", layout="wide", page_icon="☁️", initial_sidebar_state="collapsed")
 
-# 💎 최고급 다크 테마 & 메신저 UI CSS 적용
+# 💎 최고급 다크 테마 & UI CSS 적용
 st.markdown("""
 <style>
     .stApp { background-color: #0f172a; color: #f8fafc; }
@@ -169,7 +169,6 @@ def save_portfolio(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 한국거래소 차단 우회 데이터 로더 (기존 기능 100% 보존)
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
     try:
@@ -179,7 +178,6 @@ def load_krx_data():
     try: return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
     except: raise ValueError("데이터 로드 실패")
 
-# 💡 네이버 자동완성 API 연동 부분 검색기 (기존 기능 100% 보존)
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
@@ -235,10 +233,6 @@ def get_kosdaq_top_200_stocks():
     try:
         try: df = load_krx_data()
         except: df = fdr.StockListing('KOSDAQ')
-        
-        if not df.empty and 'Market' in df.columns: df = df[df['Market'].str.contains('KOSDAQ', na=False)]
-        else: df = fdr.StockListing('KOSDAQ')
-        
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
@@ -273,7 +267,6 @@ def get_ai_analysis(prompt, api_key):
             if attempt < 4: time.sleep(2); continue
             raise e
 
-# 💡 클라우드 4원칙 + MACD + RSI 지표 계산 (기존 기능 100% 보존)
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
     df = df[~df.index.duplicated(keep='first')].dropna(subset=['Close'])
@@ -344,11 +337,11 @@ tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
 if is_admin: tab4 = tabs[3]
 
 # -----------------------------------------------------
-# [탭 1] 프로 차트 분석 (기존 Plotly 차트 완벽 복원 + 트레일링 스탑 추가)
+# [탭 1] 프로 차트 분석 (트레일링 스탑 & 뉴스 감성 스코어 포함)
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
-    if not ticker: st.error("❌ 종목을 찾을 수 없습니다. (이름이나 코드를 다시 확인해 주세요)"); st.stop()
+    if not ticker: st.error("❌ 종목을 찾을 수 없습니다."); st.stop()
 
     st.markdown(f"<h3 style='color: #f8fafc;'>📊 {actual_name} <span style='font-size: 0.6em; color: #64748b;'>{ticker}</span></h3>", unsafe_allow_html=True)
     with st.spinner("터미널 데이터 동기화 중..."):
@@ -358,7 +351,6 @@ with tab1:
         except: df = None; tech_ind = {}
         
     if df is not None and not df.empty:
-        # 💡 플롯리(Plotly) 캔들 차트 및 지표 완벽 복원
         display_df = df.tail(120) 
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(56, 189, 248, 0.5)', width=1), name='BB 상단'), row=1, col=1)
@@ -378,13 +370,13 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 💡 [새 기능] 트레일링 스탑 계산
+        # 💡 [Idea 1: 스마트 트레일링 스탑 계산]
         ema5 = float(tech_ind['EMA5'])
         entry2 = float(tech_ind['EMA15'])
         entry1 = ema5 if curr_p > ema5 else curr_p
         tar_p = entry1 + (float(tech_ind['ATR']) * 4)
         stop_p = entry1 - (float(tech_ind['ATR']) * 2)
-        trailing_stop = curr_p - (float(tech_ind['ATR']) * 2.5) # 트레일링 스탑 적용
+        trailing_stop = curr_p - (float(tech_ind['ATR']) * 2.5) # 수익 보존을 위한 트레일링 스탑 적용
 
         html_kpi = f"""
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px;">
@@ -396,7 +388,7 @@ with tab1:
             <div class="kpi-card" style="border-color: #f87171;">
                 <div class="kpi-title">🛡️ 목표 & 수익 보존 라인</div>
                 <div class="kpi-value-main" style="color: #60a5fa;">목표가: {format_price(tar_p, ticker)}</div>
-                <div class="kpi-value-sub text-red-400 font-bold">✨트레일링스탑: {format_price(trailing_stop, ticker)}</div>
+                <div class="kpi-value-sub text-red-400 font-bold" style="color:#f87171; font-weight:900;">✨트레일링스탑: {format_price(trailing_stop, ticker)}</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-title">📊 핵심 지표 현황</div>
@@ -425,12 +417,12 @@ with tab1:
             for news in news_list: news_html += f"<div style='background: #1e293b; padding: 10px; border-radius: 8px; font-size: 0.85em; color: #cbd5e1; border-left: 3px solid #64748b;'>{news}</div>"
             st.markdown(news_html + "</div>", unsafe_allow_html=True)
             
-            # 💡 [새 기능] AI 뉴스 감성 스코어 추가
+            # 💡 [Idea 3: AI 뉴스 감성 스코어링 기능 (폭탄 감지)]
             if st.button("📰 AI 뉴스 감성(Sentiment) 스코어 분석", use_container_width=True):
                 if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
-                with st.spinner("AI가 최신 뉴스를 꼼꼼히 읽고 있습니다..."):
+                with st.spinner("AI가 최근 뉴스를 읽고 악재/호재 스코어를 분석 중입니다..."):
                     try:
-                        sentiment_res = get_ai_analysis(f"다음 뉴스들의 전반적인 투자 감성을 0~100점으로 평가해줘. 형식(JSON): {{\"score\": 정수, \"verdict\": \"강력 매수/긍정적/중립/부정적/강력 매도\", \"summary\": \"3줄 요약\"}} 뉴스: {news_list}", gemini_api_key)
+                        sentiment_res = get_ai_analysis(f"다음 뉴스들의 전반적인 투자 감성을 0~100점(100이 최고호재, 0이 최악악재)으로 평가해줘. 형식(JSON): {{\"score\": 정수, \"verdict\": \"강력 매수/긍정적/중립/부정적/강력 매도\", \"summary\": \"3줄 요약\"}} 뉴스: {news_list}", gemini_api_key)
                         score = sentiment_res.get('score', 50)
                         bar_color = "#34d399" if score >= 60 else "#f87171" if score <= 40 else "#fbbf24"
                         st.markdown(f"""
@@ -442,7 +434,6 @@ with tab1:
                         """, unsafe_allow_html=True)
                     except Exception as e: st.error(f"분석 실패: {e}")
 
-        # 💡 [기존 4-Agent 분석 기능 복원]
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
         if st.button("🚀 4-Agent 회의 소집 (분석 실행)", type="primary", use_container_width=True):
             if not gemini_api_key: st.error("API Key를 입력하세요!"); st.stop()
@@ -461,7 +452,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리 (기존의 강력한 자산 관리 100% 복원)
+# [탭 2] 포트폴리오 관리 (트레일링 스탑 적용)
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -479,15 +470,29 @@ with tab2:
     total_asset_value = remaining_cash
     
     if not dis_df.empty:
-        prices=[]; profs=[]; rates=[]
+        prices=[]; profs=[]; rates=[]; trailing_stops=[]
         for _, r in dis_df.iterrows():
             _, tck = get_stock_info(r['종목명'])
             p = get_current_price(tck) if tck else 0.0
-            prof = (p - r['매수단가']) * r['수량']; rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
-            prices.append(p); profs.append(prof); rates.append(rate)
+            prof = (p - r['매수단가']) * r['수량']
+            rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
+            
+            # 💡 [Idea 1] 포트폴리오 종목별 '트레일링 익절가' 계산 (수익 중일 때만 상향)
+            try:
+                temp_df = fdr.DataReader(tck, (datetime.today()-timedelta(days=100)).strftime('%Y-%m-%d'))
+                tr = pd.concat([temp_df['High']-temp_df['Low'], (temp_df['High']-temp_df['Close'].shift(1)).abs(), (temp_df['Low']-temp_df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+                atr = tr.rolling(14).mean().iloc[-1]
+                # 수익 중이면 현재가 기준 트레일링, 손실 중이면 매수가 기준 고정 손절가
+                t_stop = p - (atr * 2.5) if rate > 0 else r['매수단가'] - (atr * 2)
+            except:
+                t_stop = p * 0.95
+                
+            prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop)
             total_unrealized_profit += prof
             total_asset_value += (p * r['수량'])
+            
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
+        dis_df['🛡️손절/익절가'] = trailing_stops # 표에 트레일링 스탑 표시
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
 
     st.markdown(f"""
@@ -545,9 +550,21 @@ with tab2:
                     if idx is not None: p_data['stocks'].pop(idx); save_portfolio(p_data); st.rerun()
 
     if not dis_df.empty:
-        st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (수정 가능)</h4>", unsafe_allow_html=True)
-        edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), hide_index=True, use_container_width=True)
+        st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
+        # 트레일링 스탑가가 포함된 표 출력
+        edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
+            column_config={
+                "현재가": st.column_config.NumberColumn(format="%d ₩", disabled=True), 
+                "수익금": st.column_config.NumberColumn(format="%d ₩", disabled=True), 
+                "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True),
+                "🛡️손절/익절가": st.column_config.NumberColumn(format="%d ₩", disabled=True)
+            }, hide_index=True, use_container_width=True)
         
+        if str(pd.DataFrame(p_data['stocks'])[['매수단가', '수량']].fillna(0).values.tolist()) != str(edt_df[['매수단가', '수량']].fillna(0).values.tolist()):
+            p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
+            save_portfolio(p_data); st.rerun()
+        
+        st.markdown("---")
         btn_c1, btn_c2 = st.columns(2)
         with btn_c1:
             if st.button("✨ 펀드매니저 AI 리밸런싱", use_container_width=True):
@@ -565,7 +582,7 @@ with tab2:
                 st.success("모닝 브리핑 요약이 텔레그램으로 전송됩니다. (수동 봇 실행 필요)")
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (기존 전체 종목 딥 스캔 완벽 복원)
+# [탭 3] VIP 스크리너 (미국 주식 및 전체 기능 완벽 복원)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
