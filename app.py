@@ -309,6 +309,37 @@ def calculate_cloud_indicators(df):
     }
     return df, indicators
 
+# 💡 백테스트 및 마커 엔진 (복구 완료!)
+def run_backtest_with_markers(df):
+    trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
+    buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
+    
+    if df is None or df.empty: 
+        return {'total_trades': 0, 'win_rate': 0, 'total_return': 0}, {'x': buy_dates, 'y': buy_prices}, {'x': sell_dates, 'y': sell_prices}
+        
+    for i in range(1, len(df)):
+        prev, curr, date = df.iloc[i-1], df.iloc[i], df.index[i]
+        if pd.isna(curr.get('EMA200', np.nan)): continue
+        if position == 0:
+            if prev['EMA5'] <= prev['EMA15'] and curr['EMA5'] > curr['EMA15'] and curr['Close'] > curr['EMA200']:
+                position = 1; entry_price = curr['Close']; entry_atr = curr['ATR'] if not pd.isna(curr.get('ATR', np.nan)) and curr['ATR']>0 else curr['Close']*0.05
+                trades.append({'type': 'BUY'}); buy_dates.append(date); buy_prices.append(entry_price)
+        elif position == 1:
+            stop_loss = entry_price - (entry_atr * 2); target = entry_price + (entry_atr * 4); sell_price = 0
+            if curr['Low'] <= stop_loss: sell_price = stop_loss
+            elif curr['High'] >= target: sell_price = target
+            elif prev['EMA5'] >= prev['EMA15'] and curr['EMA5'] < curr['EMA15']: sell_price = curr['Close']
+            
+            if sell_price > 0:
+                position = 0; profit_pct = (sell_price - entry_price) / entry_price; balance *= (1 + profit_pct)
+                trades.append({'type': 'SELL', 'profit_pct': profit_pct * 100})
+                sell_dates.append(date); sell_prices.append(sell_price)
+                
+    sells = [t for t in trades if t['type'] == 'SELL']
+    wins = [t for t in sells if t.get('profit_pct', 0) > 0]
+    stats = {'total_trades': len(sells), 'win_rate': (len(wins)/len(sells)*100) if sells else 0, 'total_return': ((balance-10000000)/10000000)*100}
+    return stats, {'x': buy_dates, 'y': buy_prices}, {'x': sell_dates, 'y': sell_prices}
+
 def format_price(price, ticker): return f"{int(price):,}원" if str(ticker).isdigit() else f"${price:,.2f}"
 
 def send_telegram_message(token, chat_id, text):
@@ -348,7 +379,10 @@ with tab1:
         try: 
             raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, tech_ind = calculate_cloud_indicators(raw_df)
-        except: df = None; tech_ind = {}
+            stats, buy_m, sell_m = run_backtest_with_markers(df) # 백테스트 실행
+        except: 
+            df = None; tech_ind = {}; stats = {'total_trades': 0, 'win_rate': 0, 'total_return': 0}
+            buy_m = {'x': [], 'y': []}; sell_m = {'x': [], 'y': []}
         
     if df is not None and not df.empty:
         display_df = df.tail(120) 
@@ -361,6 +395,15 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#ef4444', width=2, dash='dash'), name='최대 매물대'), row=1, col=1)
         
+        # 💡 [복구] 매수/매도 타점 마커 차트에 추가
+        b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
+        b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
+        s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]
+        s_y = [sell_m['y'][i] for i, x in enumerate(sell_m['x']) if x >= display_df.index[0]]
+        
+        if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', size=14, color='#34d399', line=dict(width=1, color='#1e293b')), name='시스템 매수'), row=1, col=1)
+        if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=14, color='#f87171', line=dict(width=1, color='#1e293b')), name='시스템 매도'), row=1, col=1)
+
         colors = ['#26a69a' if row['Close'] >= row['Open'] else '#ef5350' for _, row in display_df.iterrows()]
         fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors, name='거래량'), row=2, col=1)
 
@@ -369,6 +412,18 @@ with tab1:
 
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+        # 💡 [복구] 백테스트 결과 요약창 추가
+        st.markdown(f"""
+        <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>
+            <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>
+            <div style='display: flex; gap: 20px;'>
+                <div><span style='color: #94a3b8; font-size: 0.9em;'>누적 수익률:</span> <span style='color: {"#34d399" if stats["total_return"] > 0 else "#f87171"}; font-weight: bold;'>{stats['total_return']:.1f}%</span></div>
+                <div><span style='color: #94a3b8; font-size: 0.9em;'>승률:</span> <span style='color: #38bdf8; font-weight: bold;'>{stats['win_rate']:.1f}%</span></div>
+                <div><span style='color: #94a3b8; font-size: 0.9em;'>총 매매 횟수:</span> <span style='color: #f8fafc; font-weight: bold;'>{stats['total_trades']}회</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         # 💡 [새 기능] 트레일링 스탑 계산
         ema5 = float(tech_ind['EMA5'])
