@@ -337,7 +337,7 @@ tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
 if is_admin: tab4 = tabs[3]
 
 # -----------------------------------------------------
-# [탭 1] 프로 차트 분석 (트레일링 스탑 & 뉴스 감성 스코어 포함)
+# [탭 1] 프로 차트 분석 (지표 요약창 복구 및 트레일링/감성 결합)
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -370,13 +370,13 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 💡 [Idea 1: 스마트 트레일링 스탑 계산]
+        # 💡 [새 기능] 트레일링 스탑 계산
         ema5 = float(tech_ind['EMA5'])
         entry2 = float(tech_ind['EMA15'])
         entry1 = ema5 if curr_p > ema5 else curr_p
         tar_p = entry1 + (float(tech_ind['ATR']) * 4)
         stop_p = entry1 - (float(tech_ind['ATR']) * 2)
-        trailing_stop = curr_p - (float(tech_ind['ATR']) * 2.5) # 수익 보존을 위한 트레일링 스탑 적용
+        trailing_stop = curr_p - (float(tech_ind['ATR']) * 2.5)
 
         html_kpi = f"""
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px;">
@@ -390,11 +390,6 @@ with tab1:
                 <div class="kpi-value-main" style="color: #60a5fa;">목표가: {format_price(tar_p, ticker)}</div>
                 <div class="kpi-value-sub text-red-400 font-bold" style="color:#f87171; font-weight:900;">✨트레일링스탑: {format_price(trailing_stop, ticker)}</div>
             </div>
-            <div class="kpi-card">
-                <div class="kpi-title">📊 핵심 지표 현황</div>
-                <div class="kpi-value-main" style="color: #38bdf8;">RSI: {tech_ind['RSI']:.1f}</div>
-                <div class="kpi-value-sub">MACD: {'선취매 턴어라운드🚀' if tech_ind['MACD_Early_Entry'] else ('골든크로스🟢' if tech_ind['MACD_Cross'] else '데드크로스🔴')}</div>
-            </div>
         </div>
         """
         st.markdown(html_kpi, unsafe_allow_html=True)
@@ -407,6 +402,21 @@ with tab1:
                     color = "#34d399" if passed else "#64748b"
                     st.markdown(f"<span style='color: {color}; font-weight: 500;'>{'✅' if passed else '❌'} {rule}</span>", unsafe_allow_html=True)
                 
+                # 💡 [복구] 기존의 화려했던 지표 상세 요약창 (볼린저밴드 등)
+                rsi_val = tech_ind.get('RSI', 50)
+                rsi_color = "#f87171" if rsi_val >= 70 else "#38bdf8" if rsi_val <= 30 else "#cbd5e1"
+                macd_state = "🚀 MACD 선취매 턴어라운드 포착!" if tech_ind.get('MACD_Early_Entry') else ("🟢 정통 골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴 데드크로스(매도)")
+                rsi_state = "📉 RSI 과매도 바닥 턴어라운드 포착!" if tech_ind.get('RSI_Turnaround') else f"{rsi_val:.1f}"
+                bb_sig = "📉 스퀴즈 (응축 폭발전야!)" if tech_ind.get('BB_Is_Squeeze') else "📈 일반 확장"
+                
+                st.markdown(f"""
+                <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-top: 15px; border-left: 4px solid #3b82f6;'>
+                    <div style='margin-bottom: 8px;'><b>RSI (14):</b> <span style='color: {rsi_color}; font-weight: bold;'>{rsi_state}</span></div>
+                    <div style='margin-bottom: 8px;'><b>MACD:</b> {macd_state}</div>
+                    <div><b>볼린저밴드:</b> <span style='color: #fbbf24;'>{bb_sig}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
                 if tech_ind.get('Is_Above_Monthly_EMA10'): st.markdown(f"<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(52, 211, 153, 0.1); color: #34d399; font-weight: 600;'>🟢 월봉 10선 생명선 위 (안전구간)</div>", unsafe_allow_html=True)
                 else: st.markdown(f"<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(248, 113, 113, 0.1); color: #f87171; font-weight: 600;'>🔴 월봉 10선 생명선 이탈 (위험구간)</div>", unsafe_allow_html=True)
             
@@ -417,12 +427,12 @@ with tab1:
             for news in news_list: news_html += f"<div style='background: #1e293b; padding: 10px; border-radius: 8px; font-size: 0.85em; color: #cbd5e1; border-left: 3px solid #64748b;'>{news}</div>"
             st.markdown(news_html + "</div>", unsafe_allow_html=True)
             
-            # 💡 [Idea 3: AI 뉴스 감성 스코어링 기능 (폭탄 감지)]
+            # 💡 [새 기능] AI 뉴스 감성 스코어 분석
             if st.button("📰 AI 뉴스 감성(Sentiment) 스코어 분석", use_container_width=True):
                 if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
-                with st.spinner("AI가 최근 뉴스를 읽고 악재/호재 스코어를 분석 중입니다..."):
+                with st.spinner("AI가 최신 뉴스를 꼼꼼히 읽고 있습니다..."):
                     try:
-                        sentiment_res = get_ai_analysis(f"다음 뉴스들의 전반적인 투자 감성을 0~100점(100이 최고호재, 0이 최악악재)으로 평가해줘. 형식(JSON): {{\"score\": 정수, \"verdict\": \"강력 매수/긍정적/중립/부정적/강력 매도\", \"summary\": \"3줄 요약\"}} 뉴스: {news_list}", gemini_api_key)
+                        sentiment_res = get_ai_analysis(f"다음 뉴스들의 전반적인 투자 감성을 0~100점으로 평가해줘. 형식(JSON): {{\"score\": 정수, \"verdict\": \"강력 매수/긍정적/중립/부정적/강력 매도\", \"summary\": \"3줄 요약\"}} 뉴스: {news_list}", gemini_api_key)
                         score = sentiment_res.get('score', 50)
                         bar_color = "#34d399" if score >= 60 else "#f87171" if score <= 40 else "#fbbf24"
                         st.markdown(f"""
@@ -434,6 +444,7 @@ with tab1:
                         """, unsafe_allow_html=True)
                     except Exception as e: st.error(f"분석 실패: {e}")
 
+        # 4-Agent 분석 엔진
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
         if st.button("🚀 4-Agent 회의 소집 (분석 실행)", type="primary", use_container_width=True):
             if not gemini_api_key: st.error("API Key를 입력하세요!"); st.stop()
@@ -477,12 +488,10 @@ with tab2:
             prof = (p - r['매수단가']) * r['수량']
             rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             
-            # 💡 [Idea 1] 포트폴리오 종목별 '트레일링 익절가' 계산 (수익 중일 때만 상향)
             try:
                 temp_df = fdr.DataReader(tck, (datetime.today()-timedelta(days=100)).strftime('%Y-%m-%d'))
                 tr = pd.concat([temp_df['High']-temp_df['Low'], (temp_df['High']-temp_df['Close'].shift(1)).abs(), (temp_df['Low']-temp_df['Close'].shift(1)).abs()], axis=1).max(axis=1)
                 atr = tr.rolling(14).mean().iloc[-1]
-                # 수익 중이면 현재가 기준 트레일링, 손실 중이면 매수가 기준 고정 손절가
                 t_stop = p - (atr * 2.5) if rate > 0 else r['매수단가'] - (atr * 2)
             except:
                 t_stop = p * 0.95
@@ -492,7 +501,7 @@ with tab2:
             total_asset_value += (p * r['수량'])
             
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
-        dis_df['🛡️손절/익절가'] = trailing_stops # 표에 트레일링 스탑 표시
+        dis_df['🛡️손절/익절가'] = trailing_stops 
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
 
     st.markdown(f"""
@@ -503,17 +512,6 @@ with tab2:
         <div class="kpi-card" style="padding: 15px; border-color: {'#34d399' if total_unrealized_profit > 0 else '#f87171'};"><div class="kpi-title">📈 평가 손익</div><div class="kpi-value-main" style="font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit > 0 else '#f87171'};">{int(total_unrealized_profit):,}원</div></div>
     </div>
     """, unsafe_allow_html=True)
-
-    if not dis_df.empty:
-        v1, v2 = st.columns(2)
-        with v1:
-            fig_p = go.Figure(data=[go.Pie(labels=dis_df['종목명'], values=dis_df['평가금액'], hole=.5, marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171']))])
-            fig_p.update_layout(title_text="자산 비중", height=280, margin=dict(t=40, b=10), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_p, use_container_width=True, config={'displayModeBar': False})
-        with v2:
-            fig_b = go.Figure(data=[go.Bar(x=dis_df['종목명'], y=dis_df['수익률(%)'], marker_color=['#26a69a' if r>0 else '#ef5350' for r in dis_df['수익률(%)']])])
-            fig_b.update_layout(title_text="종목별 수익률", height=280, margin=dict(t=40, b=10), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_b, use_container_width=True, config={'displayModeBar': False})
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
@@ -551,7 +549,6 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
-        # 트레일링 스탑가가 포함된 표 출력
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
                 "현재가": st.column_config.NumberColumn(format="%d ₩", disabled=True), 
@@ -563,26 +560,9 @@ with tab2:
         if str(pd.DataFrame(p_data['stocks'])[['매수단가', '수량']].fillna(0).values.tolist()) != str(edt_df[['매수단가', '수량']].fillna(0).values.tolist()):
             p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
             save_portfolio(p_data); st.rerun()
-        
-        st.markdown("---")
-        btn_c1, btn_c2 = st.columns(2)
-        with btn_c1:
-            if st.button("✨ 펀드매니저 AI 리밸런싱", use_container_width=True):
-                if not gemini_api_key: st.error("API Key를 입력하세요."); st.stop()
-                with st.spinner("분석 중..."):
-                    try:
-                        news = get_recent_news("경제 증시 시황")
-                        txt = "\n".join([f"- {r['종목명']} (수익: {r['수익률(%)']:.2f}%)" for _, r in dis_df.iterrows()])
-                        res = get_ai_analysis(f"시황: {news}\n포트: {txt}\n리밸런싱 지시서를 JSON으로: {{\"market_view\": \"요약\", \"action_plan\": [{{\"stock\": \"명\", \"action\": \"매도/매수/유지\", \"reason\": \"이유\"}}]}}", gemini_api_key)
-                        st.info(f"**진단:** {res.get('market_view', '')}")
-                        for i in res.get("action_plan", []): st.success(f"**{i['stock']}** 👉 **{i['action']}** : {i['reason']}")
-                    except Exception as e: st.error(f"오류: {e}")
-        with btn_c2:
-            if st.button("🌅 모닝 브리핑 생성", type="primary", use_container_width=True):
-                st.success("모닝 브리핑 요약이 텔레그램으로 전송됩니다. (수동 봇 실행 필요)")
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (미국 주식 및 전체 기능 완벽 복원)
+# [탭 3] VIP 스크리너 (상세 컬럼 및 포맷 100% 복원)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -607,31 +587,73 @@ with tab3:
                     if ind:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
+                        
                         if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_smart:
-                            p = float(df['Close'].iloc[-1]); a = float(ind['ATR'])
+                            curr_p = float(df['Close'].iloc[-1])
+                            ema5 = float(ind['EMA5'])
+                            entry2 = float(ind['EMA15'])
+                            entry1 = ema5 if curr_p > ema5 else curr_p
+                            a = float(ind['ATR'])
+                            tar_p = entry1 + (a*4)
+                            stop_p = entry1 - (a*2)
+                            rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
+                            
                             tags = []
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
+                            if ind['MACD_Cross']: tags.append("🟢골든크로스")
                             
-                            is_us = "미국" in mode
-                            curr_p_str = f"${p:,.2f}" if is_us else f"{int(p):,}원"
-                            tar_p_str = f"${(p+(a*4)):,.2f}" if is_us else f"{int(p+(a*4)):,}원"
-                            stop_p_str = f"${(p-(a*2)):,.2f}" if is_us else f"{int(p-(a*2)):,}원"
-
-                            res.append({"종목명": n, "포착원인": "+".join(tags), "현재가": curr_p_str, "목표가": tar_p_str, "손절가": stop_p_str, "RSI": ind['RSI'], "볼린저": "🚨스퀴즈" if ind["BB_Is_Squeeze"] else "확장"})
+                            # 💡 [복구] 기존의 상세했던 딕셔너리 구조 그대로 복구 (테이블용)
+                            res.append({
+                                "종목명": n, 
+                                "시그널": "🔥 강력매수" if sc>=3 else "👍 분할매수",
+                                "포착원인": " + ".join(tags) if tags else "추세추종",
+                                "현재가": curr_p, 
+                                "1차타점(대기)": entry1,
+                                "목표가": tar_p, 
+                                "손절가": stop_p, 
+                                "손익비(배)": rr_2,
+                                "RSI": ind['RSI'],
+                                "MACD": "🟢 상승" if ind['MACD'] > ind['MACD_Signal'] else "🔴 하락",
+                                "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
+                            })
                 except: pass
                 bar.progress((i+1)/len(sl))
             txt.text("✅ 스캔 완료!")
             
             if res:
                 df_res = pd.DataFrame(res)
-                st.dataframe(df_res, hide_index=True, use_container_width=True)
-                st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="screener.csv", mime="text/csv")
+                st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
+                
+                is_us = "미국" in mode
+                currency_format = "$ %.2f" if is_us else "₩ %d"
+                
+                # 💡 [복구] 기존의 완벽했던 테이블 컬럼 포맷팅 복구
+                st.dataframe(df_res, 
+                    column_config={
+                        "종목명": st.column_config.TextColumn("종목명", width="medium"),
+                        "시그널": st.column_config.TextColumn("AI 시그널"),
+                        "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
+                        "현재가": st.column_config.NumberColumn("현재가", format=currency_format),
+                        "1차타점(대기)": st.column_config.NumberColumn("1차 매수(대기)", format=currency_format),
+                        "목표가": st.column_config.NumberColumn("목표가", format=currency_format),
+                        "손절가": st.column_config.NumberColumn("손절가", format=currency_format),
+                        "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f 배"),
+                        "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
+                        "볼린저상태": st.column_config.TextColumn("볼린저 밴드")
+                    }, 
+                    hide_index=True, use_container_width=True
+                )
+                
+                st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
                 if send_to_telegram and tele_token and tele_chat_id:
                     msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
                     for r in res:
-                        msg += f"<b>{r['종목명']}</b>\n └ ✨ 포착: {r['포착원인']}\n └ 🎯 목표: {r['목표가']} / 🛡️ 손절: {r['손절가']}\n\n"
+                        cp = f"${r['현재가']:,.2f}" if is_us else f"{int(r['현재가']):,}원"
+                        tp = f"${r['목표가']:,.2f}" if is_us else f"{int(r['목표가']):,}원"
+                        sp = f"${r['손절가']:,.2f}" if is_us else f"{int(r['손절가']):,}원"
+                        msg += f"<b>{r['종목명']}</b> ({r['시그널']})\n └ ✨ 포착: {r['포착원인']}\n └ 🎯 목표: {tp} / 🛡️ 손절: {sp}\n\n"
                     send_telegram_message(tele_token, tele_chat_id, msg)
                     st.success("📱 텔레그램 전송 완료!")
             else: st.warning("월봉 10선 위 안전한 타점이 없습니다.")
