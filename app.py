@@ -309,7 +309,7 @@ def calculate_cloud_indicators(df):
     }
     return df, indicators
 
-# 💡 백테스트 및 마커 엔진 (복구 완료!)
+# 💡 백테스트 및 매수/매도 마커 엔진 (복구 완벽 적용)
 def run_backtest_with_markers(df):
     trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
     buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
@@ -368,7 +368,7 @@ tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
 if is_admin: tab4 = tabs[3]
 
 # -----------------------------------------------------
-# [탭 1] 프로 차트 분석 (지표 요약창 복구 및 트레일링/감성 결합)
+# [탭 1] 프로 차트 분석 (마커, 요약창, 감성 스코어 100% 통합)
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -379,7 +379,7 @@ with tab1:
         try: 
             raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, tech_ind = calculate_cloud_indicators(raw_df)
-            stats, buy_m, sell_m = run_backtest_with_markers(df) # 백테스트 실행
+            stats, buy_m, sell_m = run_backtest_with_markers(df) 
         except: 
             df = None; tech_ind = {}; stats = {'total_trades': 0, 'win_rate': 0, 'total_return': 0}
             buy_m = {'x': [], 'y': []}; sell_m = {'x': [], 'y': []}
@@ -395,7 +395,7 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#ef4444', width=2, dash='dash'), name='최대 매물대'), row=1, col=1)
         
-        # 💡 [복구] 매수/매도 타점 마커 차트에 추가
+        # 매수/매도 화살표 마커 차트 렌더링
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
         b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]
@@ -413,7 +413,7 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 💡 [복구] 백테스트 결과 요약창 추가
+        # 백테스트 요약 결과 UI
         st.markdown(f"""
         <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>
             <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>
@@ -425,7 +425,6 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
 
-        # 💡 [새 기능] 트레일링 스탑 계산
         ema5 = float(tech_ind['EMA5'])
         entry2 = float(tech_ind['EMA15'])
         entry1 = ema5 if curr_p > ema5 else curr_p
@@ -457,7 +456,6 @@ with tab1:
                     color = "#34d399" if passed else "#64748b"
                     st.markdown(f"<span style='color: {color}; font-weight: 500;'>{'✅' if passed else '❌'} {rule}</span>", unsafe_allow_html=True)
                 
-                # 💡 [복구] 기존의 화려했던 지표 상세 요약창 (볼린저밴드 등)
                 rsi_val = tech_ind.get('RSI', 50)
                 rsi_color = "#f87171" if rsi_val >= 70 else "#38bdf8" if rsi_val <= 30 else "#cbd5e1"
                 macd_state = "🚀 MACD 선취매 턴어라운드 포착!" if tech_ind.get('MACD_Early_Entry') else ("🟢 정통 골든크로스(매수)" if tech_ind.get('MACD_Cross') else "🔴 데드크로스(매도)")
@@ -482,7 +480,6 @@ with tab1:
             for news in news_list: news_html += f"<div style='background: #1e293b; padding: 10px; border-radius: 8px; font-size: 0.85em; color: #cbd5e1; border-left: 3px solid #64748b;'>{news}</div>"
             st.markdown(news_html + "</div>", unsafe_allow_html=True)
             
-            # 💡 [새 기능] AI 뉴스 감성 스코어 분석
             if st.button("📰 AI 뉴스 감성(Sentiment) 스코어 분석", use_container_width=True):
                 if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
                 with st.spinner("AI가 최신 뉴스를 꼼꼼히 읽고 있습니다..."):
@@ -499,7 +496,6 @@ with tab1:
                         """, unsafe_allow_html=True)
                     except Exception as e: st.error(f"분석 실패: {e}")
 
-        # 4-Agent 분석 엔진
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
         if st.button("🚀 4-Agent 회의 소집 (분석 실행)", type="primary", use_container_width=True):
             if not gemini_api_key: st.error("API Key를 입력하세요!"); st.stop()
@@ -518,7 +514,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리 (트레일링 스탑 적용)
+# [탭 2] 포트폴리오 관리 (스마트 트레일링 연동)
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -617,7 +613,7 @@ with tab2:
             save_portfolio(p_data); st.rerun()
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (상세 컬럼 및 포맷 100% 복원)
+# [탭 3] VIP 스크리너 (UI 에러 방지, 텔레그램 포맷 100% 복구)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -635,16 +631,16 @@ with tab3:
             else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
+            # 과거 데이터 700일 로드 (월봉 10선 계산용)
             for i, (n, c) in enumerate(sl.items()):
                 txt.text(f"스캔 중... [{n}]")
                 try:
-                    # 👇 바로 이 부분입니다! days=300을 days=700으로 변경하여 데이터 기간을 늘립니다.
                     df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
                     if ind:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
                         
-                        # 💡 [핵심 수정] is_smart(단기 타점)를 필수 통과 조건에서 제외하여, 10일선 위에 있는 종목들이 정상적으로 검색되도록 완화
+                        # 💡 필수 조건: 구름 4원칙 2개 이상 만족 & 월봉 10선 위에 있을 것
                         if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                             curr_p = float(df['Close'].iloc[-1])
                             ema5 = float(ind['EMA5'])
@@ -653,24 +649,24 @@ with tab3:
                             a = float(ind['ATR'])
                             tar_p = entry1 + (a*4)
                             stop_p = entry1 - (a*2)
-                            rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0
+                            rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0.0
                             
                             tags = []
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
                             
-                            # 💡 [복구] 기존의 상세했던 딕셔너리 구조 그대로 복구 (테이블용)
+                            # 💡 딕셔너리에 순수 float / str 데이터만 삽입하여 렌더링 에러 차단
                             res.append({
-                                "종목명": n, 
+                                "종목명": str(n), 
                                 "시그널": "🔥 강력매수" if is_smart else "👍 분할매수",
                                 "포착원인": " + ".join(tags) if tags else "추세추종",
-                                "현재가": curr_p, 
-                                "1차타점(대기)": entry1,
-                                "목표가": tar_p, 
-                                "손절가": stop_p, 
-                                "손익비(배)": rr_2,
-                                "RSI": ind['RSI'],
+                                "현재가": float(curr_p), 
+                                "1차타점(대기)": float(entry1),
+                                "목표가": float(tar_p), 
+                                "손절가": float(stop_p), 
+                                "손익비(배)": float(rr_2),
+                                "RSI": float(ind.get('RSI', 50)),
                                 "MACD": "🟢 상승" if ind['MACD'] > ind['MACD_Signal'] else "🔴 하락",
                                 "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
                             })
@@ -680,12 +676,15 @@ with tab3:
             
             if res:
                 df_res = pd.DataFrame(res)
+                # 💡 PyArrow 렌더링 에러를 막기 위한 최종 방어선: Inf, NaN 강제 제거
+                df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
+                
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
                 is_us = "미국" in mode
-                currency_format = "$ %.2f" if is_us else "₩ %d"
+                currency_format = "$%.2f" if is_us else "%d ₩"
                 
-                # 💡 [복구] 기존의 완벽했던 테이블 컬럼 포맷팅 복구
+                # 상세 컬럼들 완벽 복구 출력
                 st.dataframe(df_res, 
                     column_config={
                         "종목명": st.column_config.TextColumn("종목명", width="medium"),
@@ -697,6 +696,7 @@ with tab3:
                         "손절가": st.column_config.NumberColumn("손절가", format=currency_format),
                         "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f 배"),
                         "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
+                        "MACD": st.column_config.TextColumn("MACD 추세"),
                         "볼린저상태": st.column_config.TextColumn("볼린저 밴드")
                     }, 
                     hide_index=True, use_container_width=True
@@ -704,6 +704,7 @@ with tab3:
                 
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
+                # 텔레그램 상세 브리핑 분할 전송 복구
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []
                     msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
@@ -719,6 +720,7 @@ with tab3:
                         info += f" └ 🎯 <b>매수대기:</b> {ep} (현재 {cp})\n"
                         info += f" └ 🎯 <b>목표:</b> {tp} / 🛡️ <b>손절:</b> {sp}\n\n"
                         
+                        # 텔레그램 4000자 제한 방어 (안전하게 3800자 기준 분할)
                         if len(msg) + len(info) > 3800: 
                             chunks.append(msg)
                             msg = info
