@@ -153,13 +153,72 @@ def load_portfolio():
             doc = db.collection('portfolios').document(st.session_state.user_id).get()
             if doc.exists: return doc.to_dict()
         except: pass
+    file_name = f'portfolio_data_{st.session_state.user_id}.json'
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, 'r') as f: return json.load(f)
+        except: pass
+    return default_data
+
+def save_portfolio(data):
+    if db:
+        try: db.collection('portfolios').document(st.session_state.user_id).set(data); return
+        except: pass
+    with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
+
+if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
+    st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_krx_data():
+    try:
+        df = fdr.StockListing('KRX-DESC')
+        if not df.empty: return df
+    except: pass
+    try: return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
+    except: raise ValueError("데이터 로드 실패")
+
+def get_stock_info(query):
+    query = str(query).strip().upper()
+    if not query: return None, None
+    fallback = { "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "LG에너지솔루션":"373220", "에코프로비엠":"247540", "HLB":"028300", "아난티":"025980", "LG전자":"066570", "영풍":"000670"}
+    if query in fallback: return query, fallback[query]
+    
+    try:
+        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        res = requests.get(url, headers=headers, timeout=3)
+        items = res.json().get('items', [[]])[0]
+        if items:
+            for item in items:
+                if item[0].replace(" ", "").upper() == query.replace(" ", "").upper() and str(item[1]).isdigit() and len(str(item[1])) == 6:
+                    return item[0], str(item[1])
+            for item in items:
+                if str(item[1]).isdigit() and len(str(item[1])) == 6: return item[0], str(item[1])
+    except: pass
+        
+    try:
+        df_krx = load_krx_data()
+        if df_krx is not None and not df_krx.empty:
+            col_map = {c: 'Code' for c in df_krx.columns if str(c).upper() in ['SYMBOL', 'CODE', '종목코드', '단축코드']}
+            col_map.update({c: 'Name' for c in df_krx.columns if str(c).upper() in ['NAME', '종목명', '회사명']})
+            df_krx = df_krx.rename(columns=col_map)
+            df_krx['Name_NoSpace'] = df_krx['Name'].astype(str).str.replace(" ", "").str.upper()
+            if query.isdigit() and len(query) == 6:
+                match = df_krx[df_krx['Code'].astype(str).str.zfill(6) == query]
+                if not match.empty: return match['Name'].values[0], query
+            match = df_krx[df_krx['Name_NoSpace'] == query.replace(" ", "")]
+            if not match.empty: return match['Name'].values[0], str(match['Code'].values[0]).replace('.0', '').zfill(6)
+            match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query.replace(" ", ""), na=False, regex=False)]
+            if not match_partial.empty: 
+                best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
+                return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
     except: pass
     return query, query if query.isdigit() else None
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
-        # 💡 전체 시장(KRX) 대신 'KOSPI'만 명확하게 불러오도록 수정
         df = fdr.StockListing('KOSPI')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
@@ -171,7 +230,6 @@ def get_top_200_stocks():
 @st.cache_data(ttl=86400)
 def get_kosdaq_top_200_stocks():
     try:
-        # 💡 전체 시장(KRX) 대신 'KOSDAQ'만 명확하게 불러오도록 수정
         df = fdr.StockListing('KOSDAQ')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
@@ -538,13 +596,13 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
-        # 💡 [버그 픽스] 포맷 문자열을 소수점을 무시하는 %.0f로 안전하게 수정
+        # 💡 [프론트엔드 에러 픽스] format 파라미터 내 특수기호(₩, %) 제거 및 컬럼명으로 이동하여 렌더링 충돌 완벽 방어
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
-                "현재가": st.column_config.NumberColumn(format="%.0f ₩", disabled=True), 
-                "수익금": st.column_config.NumberColumn(format="%.0f ₩", disabled=True), 
-                "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True),
-                "🛡️손절/익절가": st.column_config.NumberColumn(format="%.0f ₩", disabled=True)
+                "현재가": st.column_config.NumberColumn("현재가(원)", format="%d", disabled=True), 
+                "수익금": st.column_config.NumberColumn("수익금(원)", format="%d", disabled=True), 
+                "수익률(%)": st.column_config.NumberColumn("수익률(%)", format="%.2f", disabled=True),
+                "🛡️손절/익절가": st.column_config.NumberColumn("손절/익절가(원)", format="%d", disabled=True)
             }, hide_index=True, use_container_width=True
         )
         
@@ -553,7 +611,7 @@ with tab2:
             save_portfolio(p_data); st.rerun()
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (버그 완벽 수정 / 기능 100% 복구)
+# [탭 3] VIP 스크리너 (UI 에러 방지, 텔레그램 포맷 100% 복구)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -595,7 +653,6 @@ with tab3:
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
                             
-                            # 💡 [핵심 버그 픽스] KeyError를 유발했던 ind['MACD'] 제거, 안전한 ind.get() 함수로 대체
                             res.append({
                                 "종목명": str(n), 
                                 "시그널": "🔥 강력매수" if is_smart else "👍 분할매수",
@@ -615,25 +672,29 @@ with tab3:
             
             if res:
                 df_res = pd.DataFrame(res)
-                # 에러 방지용 치환 로직
+                
+                # 💡 [프론트엔드 에러 원천 차단] 무한대, 결측치 치환 및 숫자형 데이터 강제 변환
                 df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
+                for col in ["현재가", "1차타점(대기)", "목표가", "손절가", "손익비(배)", "RSI"]:
+                    df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0)
                 
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
-                # 💡 [버그 픽스] %d 대신 안전한 %.0f 포맷 사용
+                # 💡 [화면 깨짐 완벽 방지] format 파라미터에 ₩, $ 등 특수기호 삽입 시 화면이 깨지는 현상 수정 (단위는 컬럼명으로 이동)
                 is_us = "미국" in mode
-                currency_format = "$%.2f" if is_us else "%.0f ₩"
+                currency_format = "%.2f" if is_us else "%d"
+                col_suffix = "(달러)" if is_us else "(원)"
                 
                 st.dataframe(df_res, 
                     column_config={
                         "종목명": st.column_config.TextColumn("종목명", width="medium"),
                         "시그널": st.column_config.TextColumn("AI 시그널"),
                         "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
-                        "현재가": st.column_config.NumberColumn("현재가", format=currency_format),
-                        "1차타점(대기)": st.column_config.NumberColumn("1차 매수(대기)", format=currency_format),
-                        "목표가": st.column_config.NumberColumn("목표가", format=currency_format),
-                        "손절가": st.column_config.NumberColumn("손절가", format=currency_format),
-                        "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f 배"),
+                        "현재가": st.column_config.NumberColumn(f"현재가{col_suffix}", format=currency_format),
+                        "1차타점(대기)": st.column_config.NumberColumn(f"1차 매수{col_suffix}", format=currency_format),
+                        "목표가": st.column_config.NumberColumn(f"목표가{col_suffix}", format=currency_format),
+                        "손절가": st.column_config.NumberColumn(f"손절가{col_suffix}", format=currency_format),
+                        "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f"),
                         "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
                         "MACD": st.column_config.TextColumn("MACD 추세"),
                         "볼린저상태": st.column_config.TextColumn("볼린저 밴드")
