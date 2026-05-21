@@ -291,6 +291,15 @@ def calculate_cloud_indicators(df):
     tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(window=14).mean()
     
+    # 💡 [신규] 장중 수급(거래량) 폭발 감지 로직 추가
+    try:
+        prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
+        today_vol = df['Volume'].iloc[-1]
+        # 당일 거래량이 최근 20일 평균 거래량의 250%를 초과하면 수급 폭발로 간주
+        is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
+    except:
+        is_vol_explosion = False
+        
     latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
     try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
     except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
@@ -303,6 +312,7 @@ def calculate_cloud_indicators(df):
         "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
         "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
         "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
+        "Volume_Explosion": is_vol_explosion,
         "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
     }
     return df, indicators
@@ -596,7 +606,6 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
-        # 💡 [프론트엔드 에러 픽스] format 파라미터 내 특수기호(₩, %) 제거 및 컬럼명으로 이동하여 렌더링 충돌 완벽 방어
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
                 "현재가": st.column_config.NumberColumn("현재가(원)", format="%d", disabled=True), 
@@ -611,7 +620,7 @@ with tab2:
             save_portfolio(p_data); st.rerun()
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (UI 에러 방지, 텔레그램 포맷 100% 복구)
+# [탭 3] VIP 스크리너 (수급 폭발 감지 로직 신규 적용)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -629,14 +638,13 @@ with tab3:
             else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
-            # 과거 700일 데이터 로드
             for i, (n, c) in enumerate(sl.items()):
                 txt.text(f"스캔 중... [{n}]")
                 try:
                     df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
                     if ind:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
-                        is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
+                        is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross'] or ind.get('Volume_Explosion')
                         
                         if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                             curr_p = float(df['Close'].iloc[-1])
@@ -649,6 +657,8 @@ with tab3:
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0.0
                             
                             tags = []
+                            # 💡 [신규 탑재] 거래량 폭발 태그 추가 (표에 💥수급폭발 표시)
+                            if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
@@ -673,14 +683,12 @@ with tab3:
             if res:
                 df_res = pd.DataFrame(res)
                 
-                # 💡 [프론트엔드 에러 원천 차단] 무한대, 결측치 치환 및 숫자형 데이터 강제 변환
                 df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
                 for col in ["현재가", "1차타점(대기)", "목표가", "손절가", "손익비(배)", "RSI"]:
                     df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0)
                 
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
-                # 💡 [화면 깨짐 완벽 방지] format 파라미터에 ₩, $ 등 특수기호 삽입 시 화면이 깨지는 현상 수정 (단위는 컬럼명으로 이동)
                 is_us = "미국" in mode
                 currency_format = "%.2f" if is_us else "%d"
                 col_suffix = "(달러)" if is_us else "(원)"
@@ -704,7 +712,6 @@ with tab3:
                 
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
-                # 텔레그램 분할 전송 로직 (정상 작동 확인)
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []
                     msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
