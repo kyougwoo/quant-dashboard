@@ -638,7 +638,8 @@ with tab3:
             for i, (n, c) in enumerate(sl.items()):
                 txt.text(f"스캔 중... [{n}]")
                 try:
-                    df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=300)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                    # 👇 바로 이 부분입니다! days=300을 days=700으로 변경하여 데이터 기간을 늘립니다.
+                    df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
                     if ind:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
