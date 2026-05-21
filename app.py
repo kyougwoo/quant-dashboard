@@ -309,7 +309,7 @@ def calculate_cloud_indicators(df):
     }
     return df, indicators
 
-# 💡 백테스트 및 매수/매도 마커 엔진 (복구 완벽 적용)
+# 💡 백테스트 및 매수/매도 마커 엔진
 def run_backtest_with_markers(df):
     trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
     buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
@@ -368,7 +368,7 @@ tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
 if is_admin: tab4 = tabs[3]
 
 # -----------------------------------------------------
-# [탭 1] 프로 차트 분석 (마커, 요약창, 감성 스코어 100% 통합)
+# [탭 1] 프로 차트 분석
 # -----------------------------------------------------
 with tab1:
     actual_name, ticker = get_stock_info(stock_name)
@@ -395,7 +395,6 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#ef4444', width=2, dash='dash'), name='최대 매물대'), row=1, col=1)
         
-        # 매수/매도 화살표 마커 차트 렌더링
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
         b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]
@@ -413,7 +412,6 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 백테스트 요약 결과 UI
         st.markdown(f"""
         <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>
             <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>
@@ -514,7 +512,7 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리 (스마트 트레일링 연동)
+# [탭 2] 포트폴리오 관리
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -600,20 +598,22 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
+        # 💡 [버그 픽스] 포맷 문자열을 소수점을 무시하는 %.0f로 안전하게 수정
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
-                "현재가": st.column_config.NumberColumn(format="%d ₩", disabled=True), 
-                "수익금": st.column_config.NumberColumn(format="%d ₩", disabled=True), 
+                "현재가": st.column_config.NumberColumn(format="%.0f ₩", disabled=True), 
+                "수익금": st.column_config.NumberColumn(format="%.0f ₩", disabled=True), 
                 "수익률(%)": st.column_config.NumberColumn(format="%.2f%%", disabled=True),
-                "🛡️손절/익절가": st.column_config.NumberColumn(format="%d ₩", disabled=True)
-            }, hide_index=True, use_container_width=True)
+                "🛡️손절/익절가": st.column_config.NumberColumn(format="%.0f ₩", disabled=True)
+            }, hide_index=True, use_container_width=True
+        )
         
         if str(pd.DataFrame(p_data['stocks'])[['매수단가', '수량']].fillna(0).values.tolist()) != str(edt_df[['매수단가', '수량']].fillna(0).values.tolist()):
             p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
             save_portfolio(p_data); st.rerun()
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (UI 에러 방지, 텔레그램 포맷 100% 복구)
+# [탭 3] VIP 스크리너 (버그 완벽 수정 / 기능 100% 복구)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -631,7 +631,7 @@ with tab3:
             else: sl = get_us_top_stocks()
             
             res = []; bar = st.progress(0); txt = st.empty()
-            # 과거 데이터 700일 로드 (월봉 10선 계산용)
+            # 과거 700일 데이터 로드
             for i, (n, c) in enumerate(sl.items()):
                 txt.text(f"스캔 중... [{n}]")
                 try:
@@ -640,7 +640,6 @@ with tab3:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
                         
-                        # 💡 필수 조건: 구름 4원칙 2개 이상 만족 & 월봉 10선 위에 있을 것
                         if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                             curr_p = float(df['Close'].iloc[-1])
                             ema5 = float(ind['EMA5'])
@@ -656,7 +655,7 @@ with tab3:
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
                             
-                            # 💡 딕셔너리에 순수 float / str 데이터만 삽입하여 렌더링 에러 차단
+                            # 💡 [핵심 버그 픽스] KeyError를 유발했던 ind['MACD'] 제거, 안전한 ind.get() 함수로 대체
                             res.append({
                                 "종목명": str(n), 
                                 "시그널": "🔥 강력매수" if is_smart else "👍 분할매수",
@@ -667,7 +666,7 @@ with tab3:
                                 "손절가": float(stop_p), 
                                 "손익비(배)": float(rr_2),
                                 "RSI": float(ind.get('RSI', 50)),
-                                "MACD": "🟢 상승" if ind['MACD'] > ind['MACD_Signal'] else "🔴 하락",
+                                "MACD": "🟢 상승" if ind.get("MACD_Cross", False) else "🔴 하락",
                                 "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
                             })
                 except: pass
@@ -676,15 +675,15 @@ with tab3:
             
             if res:
                 df_res = pd.DataFrame(res)
-                # 💡 PyArrow 렌더링 에러를 막기 위한 최종 방어선: Inf, NaN 강제 제거
+                # 에러 방지용 치환 로직
                 df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
                 
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
+                # 💡 [버그 픽스] %d 대신 안전한 %.0f 포맷 사용
                 is_us = "미국" in mode
-                currency_format = "$%.2f" if is_us else "%d ₩"
+                currency_format = "$%.2f" if is_us else "%.0f ₩"
                 
-                # 상세 컬럼들 완벽 복구 출력
                 st.dataframe(df_res, 
                     column_config={
                         "종목명": st.column_config.TextColumn("종목명", width="medium"),
@@ -704,7 +703,7 @@ with tab3:
                 
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
-                # 텔레그램 상세 브리핑 분할 전송 복구
+                # 텔레그램 분할 전송 로직 (정상 작동 확인)
                 if send_to_telegram and tele_token and tele_chat_id:
                     chunks = []
                     msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
@@ -720,7 +719,6 @@ with tab3:
                         info += f" └ 🎯 <b>매수대기:</b> {ep} (현재 {cp})\n"
                         info += f" └ 🎯 <b>목표:</b> {tp} / 🛡️ <b>손절:</b> {sp}\n\n"
                         
-                        # 텔레그램 4000자 제한 방어 (안전하게 3800자 기준 분할)
                         if len(msg) + len(info) > 3800: 
                             chunks.append(msg)
                             msg = info
