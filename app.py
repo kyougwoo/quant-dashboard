@@ -703,13 +703,30 @@ with tab3:
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
                 if send_to_telegram and tele_token and tele_chat_id:
+                    chunks = []
                     msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
                     for r in res:
                         cp = f"${r['현재가']:,.2f}" if is_us else f"{int(r['현재가']):,}원"
+                        ep = f"${r['1차타점(대기)']:,.2f}" if is_us else f"{int(r['1차타점(대기)']):,}원"
                         tp = f"${r['목표가']:,.2f}" if is_us else f"{int(r['목표가']):,}원"
                         sp = f"${r['손절가']:,.2f}" if is_us else f"{int(r['손절가']):,}원"
-                        msg += f"<b>{r['종목명']}</b> ({r['시그널']})\n └ ✨ 포착: {r['포착원인']}\n └ 🎯 목표: {tp} / 🛡️ 손절: {sp}\n\n"
-                    send_telegram_message(tele_token, tele_chat_id, msg)
+                        
+                        info = f"<b>{r['종목명']}</b> ({r['시그널']})\n"
+                        info += f" └ ✨ <b>포착원인:</b> {r['포착원인']}\n"
+                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>BB:</b> {r['볼린저상태']}\n"
+                        info += f" └ 🎯 <b>매수대기:</b> {ep} (현재 {cp})\n"
+                        info += f" └ 🎯 <b>목표:</b> {tp} / 🛡️ <b>손절:</b> {sp}\n\n"
+                        
+                        if len(msg) + len(info) > 3800: 
+                            chunks.append(msg)
+                            msg = info
+                        else: 
+                            msg += info
+                    chunks.append(msg)
+                    
+                    for c in chunks: 
+                        send_telegram_message(tele_token, tele_chat_id, c)
+                        time.sleep(0.3)
                     st.success("📱 텔레그램 전송 완료!")
             else: st.warning("월봉 10선 위 안전한 타점이 없습니다.")
 
