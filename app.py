@@ -153,86 +153,26 @@ def load_portfolio():
             doc = db.collection('portfolios').document(st.session_state.user_id).get()
             if doc.exists: return doc.to_dict()
         except: pass
-    file_name = f'portfolio_data_{st.session_state.user_id}.json'
-    if os.path.exists(file_name):
-        try:
-            with open(file_name, 'r') as f: return json.load(f)
-        except: pass
-    return default_data
-
-def save_portfolio(data):
-    if db:
-        try: db.collection('portfolios').document(st.session_state.user_id).set(data); return
-        except: pass
-    with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
-
-if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
-    st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def load_krx_data():
-    try:
-        df = fdr.StockListing('KRX-DESC')
-        if not df.empty: return df
-    except: pass
-    try: return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
-    except: raise ValueError("데이터 로드 실패")
-
-def get_stock_info(query):
-    query = str(query).strip().upper()
-    if not query: return None, None
-    fallback = { "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "LG에너지솔루션":"373220", "에코프로비엠":"247540", "HLB":"028300", "아난티":"025980", "LG전자":"066570", "영풍":"000670"}
-    if query in fallback: return query, fallback[query]
-    
-    try:
-        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        res = requests.get(url, headers=headers, timeout=3)
-        items = res.json().get('items', [[]])[0]
-        if items:
-            for item in items:
-                if item[0].replace(" ", "").upper() == query.replace(" ", "").upper() and str(item[1]).isdigit() and len(str(item[1])) == 6:
-                    return item[0], str(item[1])
-            for item in items:
-                if str(item[1]).isdigit() and len(str(item[1])) == 6: return item[0], str(item[1])
-    except: pass
-        
-    try:
-        df_krx = load_krx_data()
-        if df_krx is not None and not df_krx.empty:
-            col_map = {c: 'Code' for c in df_krx.columns if str(c).upper() in ['SYMBOL', 'CODE', '종목코드', '단축코드']}
-            col_map.update({c: 'Name' for c in df_krx.columns if str(c).upper() in ['NAME', '종목명', '회사명']})
-            df_krx = df_krx.rename(columns=col_map)
-            df_krx['Name_NoSpace'] = df_krx['Name'].astype(str).str.replace(" ", "").str.upper()
-            if query.isdigit() and len(query) == 6:
-                match = df_krx[df_krx['Code'].astype(str).str.zfill(6) == query]
-                if not match.empty: return match['Name'].values[0], query
-            match = df_krx[df_krx['Name_NoSpace'] == query.replace(" ", "")]
-            if not match.empty: return match['Name'].values[0], str(match['Code'].values[0]).replace('.0', '').zfill(6)
-            match_partial = df_krx[df_krx['Name_NoSpace'].str.contains(query.replace(" ", ""), na=False, regex=False)]
-            if not match_partial.empty: 
-                best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
-                return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
     except: pass
     return query, query if query.isdigit() else None
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
     try:
-        try: df = load_krx_data()
-        except: df = fdr.StockListing('KOSPI')
+        # 💡 전체 시장(KRX) 대신 'KOSPI'만 명확하게 불러오도록 수정
+        df = fdr.StockListing('KOSPI')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
-        df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX', na=False)]
+        df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
     except: return {"삼성전자":"005930", "SK하이닉스":"000660"}
 
 @st.cache_data(ttl=86400)
 def get_kosdaq_top_200_stocks():
     try:
-        try: df = load_krx_data()
-        except: df = fdr.StockListing('KOSDAQ')
+        # 💡 전체 시장(KRX) 대신 'KOSDAQ'만 명확하게 불러오도록 수정
+        df = fdr.StockListing('KOSDAQ')
         col = 'Code' if 'Code' in df.columns else 'Symbol'
         df[col] = df[col].astype(str).str.zfill(6)
         df = df[df[col].str.match(r'^\d{6}$')]
