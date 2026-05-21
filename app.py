@@ -629,7 +629,7 @@ with tab3:
             st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용 기능</h4></div>", unsafe_allow_html=True); st.stop()
             
         with st.spinner("빅데이터 필터링 중..."):
-            if "우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "NAVER":"035420"}
+            if "우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "NAVER":"035420", "기아":"000270", "셀트리온":"068270", "KB금융":"105560", "POSCO홀딩스":"005490", "LG화학":"051910"}
             elif "코스피" in mode: sl = get_top_200_stocks()
             elif "코스닥" in mode: sl = get_kosdaq_top_200_stocks()
             else: sl = get_us_top_stocks()
@@ -644,7 +644,8 @@ with tab3:
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross']
                         
-                        if sc >= 2 and ind.get("Is_Above_Monthly_EMA10") and is_smart:
+                        # 💡 [핵심 수정] is_smart(단기 타점)를 필수 통과 조건에서 제외하여, 10일선 위에 있는 종목들이 정상적으로 검색되도록 완화
+                        if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                             curr_p = float(df['Close'].iloc[-1])
                             ema5 = float(ind['EMA5'])
                             entry2 = float(ind['EMA15'])
@@ -662,7 +663,7 @@ with tab3:
                             # 💡 [복구] 기존의 상세했던 딕셔너리 구조 그대로 복구 (테이블용)
                             res.append({
                                 "종목명": n, 
-                                "시그널": "🔥 강력매수" if sc>=3 else "👍 분할매수",
+                                "시그널": "🔥 강력매수" if is_smart else "👍 분할매수",
                                 "포착원인": " + ".join(tags) if tags else "추세추종",
                                 "현재가": curr_p, 
                                 "1차타점(대기)": entry1,
