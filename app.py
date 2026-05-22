@@ -198,7 +198,8 @@ def load_krx_data():
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
-    fallback = { "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "LG에너지솔루션":"373220", "에코프로비엠":"247540", "HLB":"028300", "아난티":"025980", "LG전자":"066570", "영풍":"000670"}
+    # 💡 [업데이트] 미국 주식 대표 종목 및 한국 주식 Fallback
+    fallback = { "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "LG에너지솔루션":"373220", "에코프로비엠":"247540", "HLB":"028300", "아난티":"025980", "LG전자":"066570", "영풍":"000670", "애플":"AAPL", "테슬라":"TSLA", "엔비디아":"NVDA", "마이크로소프트":"MSFT"}
     if query in fallback: return query, fallback[query]
     
     try:
@@ -231,6 +232,11 @@ def get_stock_info(query):
                 best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
                 return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
     except: pass
+    
+    # 💡 [신규] 영문 알파벳(티커) 입력 시 미국 주식으로 간주하여 즉시 통과
+    if re.match(r'^[A-Z]+$', query):
+        return query, query
+        
     return query, query if query.isdigit() else None
 
 @st.cache_data(ttl=86400)
@@ -308,11 +314,9 @@ def calculate_cloud_indicators(df):
     tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(window=14).mean()
     
-    # 💡 [신규] 장중 수급(거래량) 폭발 감지 로직 추가
     try:
         prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
         today_vol = df['Volume'].iloc[-1]
-        # 당일 거래량이 최근 20일 평균 거래량의 250%를 초과하면 수급 폭발로 간주
         is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
     except:
         is_vol_explosion = False
