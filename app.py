@@ -503,7 +503,7 @@ with tab1:
                     except Exception as e: st.error(f"분석 실패: {e}")
 
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
-        if st.button("🚀 4-Agent 회의 소집 (분석 실행)", type="primary", use_container_width=True):
+        if st.button("🚀 4-Agent 회 소집 (분석 실행)", type="primary", use_container_width=True):
             if not gemini_api_key: st.error("API Key를 입력하세요!"); st.stop()
             with st.spinner("4명의 AI 전문가가 차트와 뉴스를 분석하며 토론 중입니다..."):
                 try:
@@ -620,11 +620,13 @@ with tab2:
             save_portfolio(p_data); st.rerun()
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (수급 폭발 감지 로직 신규 적용)
+# [탭 3] VIP 스크리너 (수급 폭발 감지 & 유동성 필터 신규 적용)
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
     mode = st.radio("시장 스캔 모드 선택", ["⚡ 한국 우량주 40종목 (무료)", "💎 한국 코스피 상위 200종목 (VIP)", "🚀 한국 코스닥 상위 200종목 (VIP)", "🦅 미국 S&P500 상위 100종목 (VIP)"], horizontal=True)
+    
+    use_liquidity_filter = st.checkbox("🛡️ 실전 유동성 필터 켜기 (시총 1천억 & 5일평균 거래대금 50억 이상만)", value=False, help="체크 시 세력 장난이 심한 잡주를 걸러냅니다. 끄면 바닥에서 터지는 급등주까지 모두 잡습니다.")
     send_to_telegram = st.checkbox("📱 스캔 완료 시 내 텔레그램으로 전송", value=True)
     
     if st.button("🔎 딥 스캔 실행", type="primary", use_container_width=True):
@@ -637,12 +639,26 @@ with tab3:
             elif "코스닥" in mode: sl = get_kosdaq_top_200_stocks()
             else: sl = get_us_top_stocks()
             
+            marcap_dict = {}
+            if "미국" not in mode:
+                try:
+                    krx_df = fdr.StockListing('KRX')
+                    marcap_dict = dict(zip(krx_df['Code'], krx_df['Marcap']))
+                except: pass
+            
             res = []; bar = st.progress(0); txt = st.empty()
             for i, (n, c) in enumerate(sl.items()):
                 txt.text(f"스캔 중... [{n}]")
                 try:
                     df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
                     if ind:
+                        recent_amount = (df['Close'].tail(5) * df['Volume'].tail(5)).mean()
+                        marcap = marcap_dict.get(c, 0)
+                        
+                        if use_liquidity_filter and "미국" not in mode:
+                            if marcap > 0 and marcap < 100000000000: continue
+                            if recent_amount < 5000000000: continue
+
                         sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                         is_smart = ind['MACD_Early_Entry'] or ind['RSI_Turnaround'] or ind['MACD_Cross'] or ind.get('Volume_Explosion')
                         
@@ -657,7 +673,6 @@ with tab3:
                             rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0.0
                             
                             tags = []
-                            # 💡 [신규 탑재] 거래량 폭발 태그 추가 (표에 💥수급폭발 표시)
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
@@ -674,7 +689,9 @@ with tab3:
                                 "손익비(배)": float(rr_2),
                                 "RSI": float(ind.get('RSI', 50)),
                                 "MACD": "🟢 상승" if ind.get("MACD_Cross", False) else "🔴 하락",
-                                "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장"
+                                "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장",
+                                "시총(억)": int(marcap / 100000000) if marcap > 0 else 0,
+                                "거래대금(억)": int(recent_amount / 100000000)
                             })
                 except: pass
                 bar.progress((i+1)/len(sl))
@@ -684,7 +701,7 @@ with tab3:
                 df_res = pd.DataFrame(res)
                 
                 df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
-                for col in ["현재가", "1차타점(대기)", "목표가", "손절가", "손익비(배)", "RSI"]:
+                for col in ["현재가", "1차타점(대기)", "목표가", "손절가", "손익비(배)", "RSI", "시총(억)", "거래대금(억)"]:
                     df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0)
                 
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
@@ -705,7 +722,9 @@ with tab3:
                         "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f"),
                         "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
                         "MACD": st.column_config.TextColumn("MACD 추세"),
-                        "볼린저상태": st.column_config.TextColumn("볼린저 밴드")
+                        "볼린저상태": st.column_config.TextColumn("볼린저 밴드"),
+                        "시총(억)": st.column_config.NumberColumn("시가총액(억)", format="%d", help="미국 주식은 0으로 표기될 수 있습니다."),
+                        "거래대금(억)": st.column_config.NumberColumn("평균 거래대금(억)", format="%d")
                     }, 
                     hide_index=True, use_container_width=True
                 )
