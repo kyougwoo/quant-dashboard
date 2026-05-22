@@ -118,7 +118,6 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                             target_tier = 'Admin' if login_id.lower() == 'admin' else 'VIP' if login_id.lower() == 'vip' else 'Free'
                             if user_doc.exists and user_doc.to_dict().get('password') == login_pw:
                                 st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, user_doc.to_dict().get('tier', 'Free')
-                                # 💡 로그인 성공 시 저장된 투자 성향 불러오기
                                 st.session_state.invest_style = user_doc.to_dict().get('invest_style', "⚖️ 보통 (균형 추구)")
                             elif not user_doc.exists:
                                 user_ref.set({'password': login_pw, 'tier': target_tier, 'created_at': datetime.now(), 'invest_style': "⚖️ 보통 (균형 추구)"})
@@ -134,21 +133,13 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                 
     with set_col:
         st.markdown("### ⚙️ 시스템 설정")
-        
-        # 💡 투자 성향이 세션에 없으면 기본값 설정 (로그인 안 했을 때를 대비)
         if 'invest_style' not in st.session_state: st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
-        
-        # 💡 성향 선택 (selectbox)
         new_style = st.selectbox("🎯 AI 성향 타겟팅", ["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"], index=["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"].index(st.session_state.invest_style))
-        
-        # 💡 성향이 변경되었을 때 DB에 즉시 업데이트
         if new_style != st.session_state.invest_style:
             st.session_state.invest_style = new_style
             if st.session_state.logged_in and db:
-                try:
-                    db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
-                except Exception as e:
-                    st.warning(f"성향 저장 오류: {e}")
+                try: db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
+                except Exception as e: st.warning(f"성향 저장 오류: {e}")
 
         gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
         if not gemini_api_key: gemini_api_key = st.text_input("Gemini API Key (필수)", type="password")
@@ -198,7 +189,6 @@ def load_krx_data():
 def get_stock_info(query):
     query = str(query).strip().upper()
     if not query: return None, None
-    # 💡 [업데이트] 미국 주식 대표 종목 및 한국 주식 Fallback
     fallback = { "삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "기아":"000270", "알테오젠":"196170", "NAVER":"035420", "LG에너지솔루션":"373220", "에코프로비엠":"247540", "HLB":"028300", "아난티":"025980", "LG전자":"066570", "영풍":"000670", "애플":"AAPL", "테슬라":"TSLA", "엔비디아":"NVDA", "마이크로소프트":"MSFT"}
     if query in fallback: return query, fallback[query]
     
@@ -233,7 +223,6 @@ def get_stock_info(query):
                 return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
     except: pass
     
-    # 💡 [신규] 영문 알파벳(티커) 입력 시 미국 주식으로 간주하여 즉시 통과
     if re.match(r'^[A-Z]+$', query):
         return query, query
         
@@ -381,6 +370,14 @@ def get_current_price(ticker):
         df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
         return float(df['Close'].iloc[-1]) if not df.empty else 0.0
     except: return 0.0
+
+# 💡 [신규] 실시간 원달러 환율 불러오기 (미국 주식 자산 환산용)
+@st.cache_data(ttl=3600)
+def get_exchange_rate():
+    try:
+        df = fdr.DataReader('USD/KRW', (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+        return float(df['Close'].iloc[-1])
+    except: return 1350.0 # 에러 시 기본값
 
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "영풍", "애플(AAPL)"])
@@ -541,28 +538,44 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리
+# [탭 2] 포트폴리오 관리 (실시간 환율 반영 엔진 탑재)
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
-    st.markdown(f"<h3 style='color: #f8fafc;'>💼 {st.session_state.user_id}님의 퀀트 포트폴리오</h3>", unsafe_allow_html=True)
+    usd_krw = get_exchange_rate() # 💡 실시간 환율 호출
     
-    with st.expander("💰 초기 자본금 세팅", expanded=(p_data['initial_capital'] == 0)):
+    col_t1, col_t2 = st.columns([3, 1])
+    with col_t1: st.markdown(f"<h3 style='color: #f8fafc;'>💼 {st.session_state.user_id}님의 퀀트 포트폴리오</h3>", unsafe_allow_html=True)
+    with col_t2: st.markdown(f"<div style='text-align:right; margin-top:20px; font-size:0.9em; color:#94a3b8;'>현재 환율 적용: <span style='color:#38bdf8; font-weight:bold;'>1 USD = {int(usd_krw):,}원</span></div>", unsafe_allow_html=True)
+    
+    with st.expander("💰 초기 자본금 세팅 (원화 기준)", expanded=(p_data['initial_capital'] == 0)):
         new_cap = st.number_input("초기 자본금 (원화)", value=int(p_data['initial_capital']), step=1000000)
         if st.button("저장"): p_data['initial_capital'] = new_cap; save_portfolio(p_data); st.rerun()
 
-    total_invested = sum(r['매수단가'] * r['수량'] for r in p_data['stocks'])
-    remaining_cash = p_data['initial_capital'] + p_data['realized_profit'] - total_invested
+    # 💡 [업데이트] 환율을 반영한 투자 원금 원화 환산
+    total_invested_krw = 0
+    for r in p_data['stocks']:
+        _, tck = get_stock_info(r['종목명'])
+        is_us = not str(tck).isdigit() if tck else False
+        ex_rate = usd_krw if is_us else 1.0
+        total_invested_krw += (r['매수단가'] * r['수량'] * ex_rate)
+        
+    remaining_cash = p_data['initial_capital'] + p_data['realized_profit'] - total_invested_krw
     dis_df = pd.DataFrame(p_data['stocks']) if p_data['stocks'] else pd.DataFrame(columns=['종목명', '매수단가', '수량'])
     
-    total_unrealized_profit = 0
-    total_asset_value = remaining_cash
+    total_unrealized_profit_krw = 0
+    total_asset_value_krw = remaining_cash
     
     if not dis_df.empty:
-        prices=[]; profs=[]; rates=[]; trailing_stops=[]
+        prices=[]; profs=[]; rates=[]; trailing_stops=[]; currencies=[]
         for _, r in dis_df.iterrows():
             _, tck = get_stock_info(r['종목명'])
+            is_us = not str(tck).isdigit() if tck else False
+            ex_rate = usd_krw if is_us else 1.0
+            
             p = get_current_price(tck) if tck else 0.0
+            
+            # 수익금 및 수익률은 입력된 통화(원/달러) 기준으로 계산
             prof = (p - r['매수단가']) * r['수량']
             rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             
@@ -574,10 +587,13 @@ with tab2:
             except:
                 t_stop = p * 0.95
                 
-            prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop)
-            total_unrealized_profit += prof
-            total_asset_value += (p * r['수량'])
+            prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop); currencies.append("USD" if is_us else "KRW")
             
+            # 총자산 합산을 위해 원화로 변환
+            total_unrealized_profit_krw += (prof * ex_rate)
+            total_asset_value_krw += (p * r['수량'] * ex_rate)
+            
+        dis_df['통화'] = currencies
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         dis_df['🛡️손절/익절가'] = trailing_stops 
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
@@ -585,9 +601,9 @@ with tab2:
     st.markdown(f"""
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
         <div class="kpi-card" style="padding: 15px;"><div class="kpi-title">💵 보유 현금</div><div class="kpi-value-main" style="font-size: 1.4rem;">{int(remaining_cash):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px;"><div class="kpi-title">📦 투자 원금</div><div class="kpi-value-main" style="font-size: 1.4rem;">{int(total_invested):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px; border-color: #38bdf8;"><div class="kpi-title">💎 총 자산</div><div class="kpi-value-main" style="font-size: 1.4rem; color: #38bdf8;">{int(total_asset_value):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px; border-color: {'#34d399' if total_unrealized_profit > 0 else '#f87171'};"><div class="kpi-title">📈 평가 손익</div><div class="kpi-value-main" style="font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit > 0 else '#f87171'};">{int(total_unrealized_profit):,}원</div></div>
+        <div class="kpi-card" style="padding: 15px;"><div class="kpi-title">📦 투자 원금</div><div class="kpi-value-main" style="font-size: 1.4rem;">{int(total_invested_krw):,}원</div></div>
+        <div class="kpi-card" style="padding: 15px; border-color: #38bdf8;"><div class="kpi-title">💎 총 자산</div><div class="kpi-value-main" style="font-size: 1.4rem; color: #38bdf8;">{int(total_asset_value_krw):,}원</div></div>
+        <div class="kpi-card" style="padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};"><div class="kpi-title">📈 평가 손익</div><div class="kpi-value-main" style="font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};">{int(total_unrealized_profit_krw):,}원</div></div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -595,8 +611,8 @@ with tab2:
     with buy_tab:
         with st.form("buy"):
             bc1, bc2, bc3, bc4 = st.columns(4)
-            with bc1: p_n = st.text_input("종목명")
-            with bc2: p_p = st.number_input("매수단가", min_value=0.0)
+            with bc1: p_n = st.text_input("종목명 (애플, AAPL 등 입력 가능)")
+            with bc2: p_p = st.number_input("매수단가 (미국주식은 달러입력)", min_value=0.0)
             with bc3: p_q = st.number_input("수량", min_value=1.0)
             with bc4: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); submit = st.form_submit_button("추가", use_container_width=True)
             if submit: an, _ = get_stock_info(p_n); p_data['stocks'].append({'종목명': an if an else p_n, '매수단가': p_p, '수량': p_q}); save_portfolio(p_data); st.rerun()
@@ -611,7 +627,14 @@ with tab2:
                 if submit2:
                     idx = next((i for i, v in enumerate(p_data['stocks']) if v["종목명"] == s_n), None)
                     if idx is not None and s_q <= p_data['stocks'][idx]['수량']:
-                        p_data['realized_profit'] += (s_p - p_data['stocks'][idx]['매수단가']) * s_q
+                        # 💡 [업데이트] 수익 실현 시 달러 수익을 원화로 환산하여 저장
+                        _, tck = get_stock_info(s_n)
+                        is_us = not str(tck).isdigit() if tck else False
+                        ex_rate = usd_krw if is_us else 1.0
+                        
+                        prof_in_currency = (s_p - p_data['stocks'][idx]['매수단가']) * s_q
+                        p_data['realized_profit'] += (prof_in_currency * ex_rate)
+                        
                         p_data['stocks'][idx]['수량'] -= s_q
                         if p_data['stocks'][idx]['수량'] <= 0: p_data['stocks'].pop(idx)
                         save_portfolio(p_data); st.rerun()
@@ -627,12 +650,14 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
+        # 💡 [업데이트] 표에서 '원' 글자 제거 및 소수점 표시 허용
         edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
             column_config={
-                "현재가": st.column_config.NumberColumn("현재가(원)", format="%d", disabled=True), 
-                "수익금": st.column_config.NumberColumn("수익금(원)", format="%d", disabled=True), 
+                "통화": st.column_config.TextColumn("통화", disabled=True),
+                "현재가": st.column_config.NumberColumn("현재가", format="%.2f", disabled=True), 
+                "수익금": st.column_config.NumberColumn("수익금", format="%.2f", disabled=True), 
                 "수익률(%)": st.column_config.NumberColumn("수익률(%)", format="%.2f", disabled=True),
-                "🛡️손절/익절가": st.column_config.NumberColumn("손절/익절가(원)", format="%d", disabled=True)
+                "🛡️손절/익절가": st.column_config.NumberColumn("손절/익절가", format="%.2f", disabled=True)
             }, hide_index=True, use_container_width=True
         )
         
