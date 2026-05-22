@@ -97,7 +97,6 @@ db = st.session_state.db_client
 
 for k in ['logged_in', 'user_id', 'user_tier']:
     if k not in st.session_state: st.session_state[k] = False if k == 'logged_in' else 'guest' if k == 'user_id' else 'Free'
-if 'invest_style' not in st.session_state: st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
 
 # 💡 상단 계정 및 환경 설정
 st.markdown("<h1 class='main-title'>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
@@ -119,9 +118,12 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                             target_tier = 'Admin' if login_id.lower() == 'admin' else 'VIP' if login_id.lower() == 'vip' else 'Free'
                             if user_doc.exists and user_doc.to_dict().get('password') == login_pw:
                                 st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, user_doc.to_dict().get('tier', 'Free')
+                                # 💡 로그인 성공 시 저장된 투자 성향 불러오기
+                                st.session_state.invest_style = user_doc.to_dict().get('invest_style', "⚖️ 보통 (균형 추구)")
                             elif not user_doc.exists:
-                                user_ref.set({'password': login_pw, 'tier': target_tier, 'created_at': datetime.now()})
+                                user_ref.set({'password': login_pw, 'tier': target_tier, 'created_at': datetime.now(), 'invest_style': "⚖️ 보통 (균형 추구)"})
                                 st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, target_tier
+                                st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
                             st.rerun()
                         except: st.error("DB 오류")
                     else:
@@ -132,7 +134,22 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                 
     with set_col:
         st.markdown("### ⚙️ 시스템 설정")
-        st.session_state.invest_style = st.selectbox("🎯 AI 성향 타겟팅", ["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"], index=["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"].index(st.session_state.invest_style))
+        
+        # 💡 투자 성향이 세션에 없으면 기본값 설정 (로그인 안 했을 때를 대비)
+        if 'invest_style' not in st.session_state: st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
+        
+        # 💡 성향 선택 (selectbox)
+        new_style = st.selectbox("🎯 AI 성향 타겟팅", ["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"], index=["⚖️ 보통 (균형 추구)", "🦁 공격적 (수익 극대화)", "🐢 보수적 (안전 제일)"].index(st.session_state.invest_style))
+        
+        # 💡 성향이 변경되었을 때 DB에 즉시 업데이트
+        if new_style != st.session_state.invest_style:
+            st.session_state.invest_style = new_style
+            if st.session_state.logged_in and db:
+                try:
+                    db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
+                except Exception as e:
+                    st.warning(f"성향 저장 오류: {e}")
+
         gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
         if not gemini_api_key: gemini_api_key = st.text_input("Gemini API Key (필수)", type="password")
         tele_token = str(st.secrets.get("TELEGRAM_TOKEN", "")).strip()
