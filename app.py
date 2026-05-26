@@ -244,45 +244,63 @@ def get_stock_info(query):
         
     return query, query if query.isdigit() else None
 
-# 💡 [업그레이드] 스마트 그룹핑을 적용한 핵심 섹터 분류 함수
+# 💡 [업그레이드] 초강력 스마트 섹터 그룹핑 엔진
 @st.cache_data(ttl=86400)
 def get_sector_map():
     try:
-        df = fdr.StockListing('KRX')
+        # 정확도를 위해 코스피, 코스닥 목록을 합쳐서 사용
+        df_kospi = fdr.StockListing('KOSPI')
+        df_kosdaq = fdr.StockListing('KOSDAQ')
+        df = pd.concat([df_kospi, df_kosdaq], ignore_index=True)
+        
         sector_dict = {}
         for name, sector in zip(df['Name'], df['Sector']):
             s = str(sector).strip()
-            # 거래소의 복잡한 산업분류명을 12대 핵심 섹터로 스마트하게 묶어줌
-            if s == 'nan' or not s:
-                sector_dict[name] = '기타분류'
-            elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신 및 방송 장비', '디스플레이']):
-                sector_dict[name] = 'IT/반도체'
+            n = str(name).strip()
+            
+            if s == 'nan' or not s or s == 'None':
+                sector_dict[n] = '제조/기타산업'
+            elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기']):
+                sector_dict[n] = 'IT/반도체'
             elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판']):
-                sector_dict[name] = 'SW/인터넷'
-            elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진']):
-                sector_dict[name] = '자동차/모빌리티'
-            elif any(k in s for k in ['의약품', '의료', '보건', '생물']):
-                sector_dict[name] = '바이오/헬스케어'
-            elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자']):
-                sector_dict[name] = '금융'
+                sector_dict[n] = 'SW/인터넷'
+            elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '조선']):
+                sector_dict[n] = '자동차/모빌리티'
+            elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약']):
+                sector_dict[n] = '바이오/헬스케어'
+            elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '지주']):
+                sector_dict[n] = '금융'
             elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학']):
-                sector_dict[name] = '화학/2차전지'
-            elif any(k in s for k in ['금속', '철강']):
-                sector_dict[name] = '철강/금속'
+                sector_dict[n] = '화학/2차전지'
+            elif any(k in s for k in ['금속', '철강', '비금속']):
+                sector_dict[n] = '철강/금속'
             elif any(k in s for k in ['건설', '토목', '부동산']):
-                sector_dict[name] = '건설/부동산'
-            elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품']):
-                sector_dict[name] = '유통/소비재'
-            elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상']):
-                sector_dict[name] = '엔터/미디어'
-            elif any(k in s for k in ['운송', '항공', '해운', '창고']):
-                sector_dict[name] = '물류/운송'
+                sector_dict[n] = '건설/부동산'
+            elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복']):
+                sector_dict[n] = '유통/소비재'
+            elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락']):
+                sector_dict[n] = '엔터/미디어'
+            elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']):
+                sector_dict[n] = '물류/운송'
             elif any(k in s for k in ['전기', '가스', '수도', '에너지']):
-                sector_dict[name] = '유틸리티/에너지'
+                sector_dict[n] = '유틸리티/에너지'
             else:
-                sector_dict[name] = '제조/기타산업'
+                sector_dict[n] = '제조/기타산업'
+                
+        # 💡 예외 처리: 핵심 주도주들을 하드코딩으로 강제 보호 (오류 방지)
+        sector_dict.update({
+            '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체',
+            '현대차': '자동차/모빌리티', '기아': '자동차/모빌리티', '현대모비스': '자동차/모빌리티',
+            'LG에너지솔루션': '화학/2차전지', '에코프로비엠': '화학/2차전지', '에코프로': '화학/2차전지', 'POSCO홀딩스': '화학/2차전지',
+            '삼성바이오로직스': '바이오/헬스케어', '셀트리온': '바이오/헬스케어', '알테오젠': '바이오/헬스케어', 'HLB': '바이오/헬스케어',
+            'NAVER': 'SW/인터넷', '카카오': 'SW/인터넷',
+            'KB금융': '금융', '신한지주': '금융', '하나금융지주': '금융',
+            'HD현대중공업': '물류/운송'
+        })
         return sector_dict
-    except: return {}
+    except Exception as e: 
+        print(f"Sector map error: {e}")
+        return {}
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
