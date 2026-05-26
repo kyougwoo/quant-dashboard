@@ -806,15 +806,74 @@ with tab3:
             else: st.warning("월봉 10선 위 안전한 타점이 없습니다.")
 
 # -----------------------------------------------------
-# [탭 4] Admin (기존 유저 DB 관리)
+# [탭 4] Admin (최고 관리자 DB 관리 시스템)
 # -----------------------------------------------------
 if is_admin:
     with tab4:
         st.markdown("<h3 style='color: #f8fafc;'>🛠️ 최고 관리자 시스템</h3>", unsafe_allow_html=True)
         if db:
             users_stream = db.collection('users').stream()
-            user_list = [{"아이디": u.id, "등급": u.to_dict().get("tier", "Free"), "가입일": str(u.to_dict().get("created_at", ""))} for u in users_stream]
+            user_list = [{"아이디": u.id, "등급": u.to_dict().get("tier", "Free"), "가입일": str(u.to_dict().get("created_at", ""))[:16]} for u in users_stream]
+            
             if user_list:
                 df_users = pd.DataFrame(user_list)
-                st.data_editor(df_users, hide_index=True, use_container_width=True)
-        else: st.error("Firebase 미연결")
+                
+                # 1. 회원 등급 변경 구역
+                st.markdown("<h4 style='color: #38bdf8; margin-top: 20px;'>🔄 회원 등급 관리</h4>", unsafe_allow_html=True)
+                st.write("표에서 '등급' 열을 클릭하여 Free / VIP / Admin 중 하나로 변경한 뒤, 아래 저장 버튼을 누르세요.")
+                
+                # 아이디와 가입일은 잠그고(disabled=True), 등급만 선택(Selectbox)할 수 있도록 설정
+                edited_df = st.data_editor(
+                    df_users, 
+                    column_config={
+                        "아이디": st.column_config.TextColumn("아이디 (이메일)", disabled=True),
+                        "등급": st.column_config.SelectboxColumn("등급 (권한)", options=["Free", "VIP", "Admin"]),
+                        "가입일": st.column_config.TextColumn("가입일시", disabled=True)
+                    },
+                    hide_index=True, 
+                    use_container_width=True
+                )
+                
+                # 변경된 등급 DB에 저장
+                if st.button("💾 변경된 등급 저장", type="primary"):
+                    with st.spinner("권한을 업데이트하고 있습니다..."):
+                        update_count = 0
+                        for index, row in edited_df.iterrows():
+                            original_tier = df_users.iloc[index]['등급']
+                            new_tier = row['등급']
+                            if original_tier != new_tier:
+                                db.collection('users').document(row['아이디']).update({'tier': new_tier})
+                                update_count += 1
+                        
+                        if update_count > 0:
+                            st.success(f"✅ {update_count}명의 회원 등급이 성공적으로 업데이트되었습니다!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.info("변경된 내용이 없습니다.")
+                
+                st.markdown("---")
+                
+                # 2. 회원 삭제 구역
+                st.markdown("<h4 style='color: #f87171;'>🗑️ 회원 영구 삭제</h4>", unsafe_allow_html=True)
+                with st.form("delete_user_form"):
+                    col_d1, col_d2 = st.columns([3, 1])
+                    with col_d1:
+                        del_user_id = st.selectbox("삭제할 계정을 선택하세요", df_users['아이디'].tolist())
+                    with col_d2:
+                        st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                        del_submit = st.form_submit_button("계정 삭제", use_container_width=True)
+                    
+                    if del_submit:
+                        if del_user_id.lower() == 'admin':
+                            st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 없습니다!")
+                        else:
+                            # DB에서 해당 유저 문서(Document) 삭제
+                            db.collection('users').document(del_user_id).delete()
+                            st.success(f"✅ '{del_user_id}' 계정이 영구 삭제되었습니다.")
+                            time.sleep(1)
+                            st.rerun()
+            else: 
+                st.info("가입된 회원이 없습니다.")
+        else: 
+            st.error("🚨 Firebase 클라우드 DB가 연결되지 않았습니다.")
