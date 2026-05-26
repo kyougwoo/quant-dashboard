@@ -321,7 +321,6 @@ def get_recent_news(keyword):
         return [item.title.text for item in soup.find_all('item')[:5] if item.title]
     except: return ["뉴스 수집 오류"]
 
-# 💡 [핵심 버그 수정] VVIP 리포트 에러를 원천 차단하는 궁극의 AI 요청 함수
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
@@ -448,9 +447,15 @@ def run_backtest_with_markers(df):
 
 def format_price(price, ticker): return f"{int(price):,}원" if str(ticker).isdigit() else f"${price:,.2f}"
 
+# 💡 [핵심 버그 수정] 텔레그램 API 주소에 섞인 마크다운 링크 문법 제거 (오류 방지)
 def send_telegram_message(token, chat_id, text):
-    try: return requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
-    except: return False
+    try: 
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        res = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+        return res.status_code == 200
+    except Exception as e: 
+        print(f"Telegram Error: {e}")
+        return False
 
 @st.cache_data(ttl=3600)
 def get_current_price(ticker):
@@ -525,7 +530,6 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # 💡 [버그 완벽 수정] 마크다운 코드블록 버그를 유발하는 들여쓰기(Indentation) 제거
         html_summary = (
             "<div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>"
             "<h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>"
@@ -840,7 +844,6 @@ with tab2:
                     if isinstance(action_items, dict): action_items = [action_items]
                     elif isinstance(action_items, str) or not isinstance(action_items, list): action_items = []
                     
-                    # 💡 [버그 완벽 차단] 줄바꿈 시 들여쓰기를 하지 않아 마크다운 엔진이 코드블록으로 오인하는 것을 방지!
                     html_report = (
                         "<div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>"
                         "<h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'>🩺 포트폴리오 종합 진단</h4>"
@@ -1022,10 +1025,17 @@ with tab3:
                             msg += info
                     chunks.append(msg)
                     
+                    # 💡 [버그 완벽 수정] 텔레그램 전송 실패 시 에러 알림 기능 추가
+                    telegram_success = True
                     for c in chunks: 
-                        send_telegram_message(tele_token, tele_chat_id, c)
+                        if not send_telegram_message(tele_token, tele_chat_id, c):
+                            telegram_success = False
                         time.sleep(0.3)
-                    st.success("📱 텔레그램 전송 완료!")
+                        
+                    if telegram_success:
+                        st.success("📱 텔레그램 전송 완료!")
+                    else:
+                        st.error("🚨 텔레그램 전송 실패! [시스템 설정]에서 텔레그램 Bot 토큰과 Chat ID가 정확한지 확인해주세요.")
             else: 
                 st.info("💡 스캔을 완료했으나, 현재 조건(월봉 10선 위 안전구간)을 통과한 종목이 없습니다.")
 
@@ -1086,7 +1096,7 @@ if is_admin:
                     
                     if del_submit:
                         if del_user_id.lower() == 'admin':
-                            st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 없습니다!")
+                            st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 정없습니다!")
                         else:
                             db.collection('users').document(del_user_id).delete()
                             st.success(f"✅ '{del_user_id}' 계정이 영구 삭제되었습니다.")
