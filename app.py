@@ -244,63 +244,71 @@ def get_stock_info(query):
         
     return query, query if query.isdigit() else None
 
-# 💡 [버그 완벽 수정] 초강력 스마트 섹터 그룹핑 엔진
+# 💡 [에러 완벽 차단] 초강력 스마트 섹터 그룹핑 엔진
 @st.cache_data(ttl=86400)
 def get_sector_map():
-    # 💡 1순위: 에러가 나든 안 나든 핵심 주도주는 무조건 하드코딩으로 강제 보호
+    # 💡 1순위 안전망: 데이터가 뻗어도 웬만한 우량주는 커버하는 방어막 (하드코딩)
     sector_dict = {
-        '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체',
+        '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체', '리노공업': 'IT/반도체', 'HPSP': 'IT/반도체',
         '현대차': '자동차/모빌리티', '기아': '자동차/모빌리티', '현대모비스': '자동차/모빌리티',
-        'LG에너지솔루션': '화학/2차전지', '에코프로비엠': '화학/2차전지', '에코프로': '화학/2차전지', 'POSCO홀딩스': '화학/2차전지',
-        '삼성바이오로직스': '바이오/헬스케어', '셀트리온': '바이오/헬스케어', '알테오젠': '바이오/헬스케어', 'HLB': '바이오/헬스케어',
-        'NAVER': 'SW/인터넷', '카카오': 'SW/인터넷',
-        'KB금융': '금융', '신한지주': '금융', '하나금융지주': '금융',
-        'HD현대중공업': '물류/운송'
+        'LG에너지솔루션': '화학/2차전지', '에코프로비엠': '화학/2차전지', '에코프로': '화학/2차전지', 'POSCO홀딩스': '화학/2차전지', '엘앤에프': '화학/2차전지', '포스코퓨처엠': '화학/2차전지', 'LG화학': '화학/2차전지',
+        '삼성바이오로직스': '바이오/헬스케어', '셀트리온': '바이오/헬스케어', '알테오젠': '바이오/헬스케어', 'HLB': '바이오/헬스케어', '삼천당제약': '바이오/헬스케어', '유한양행': '바이오/헬스케어',
+        'NAVER': 'SW/인터넷', '카카오': 'SW/인터넷', '엔씨소프트': 'SW/인터넷', '크래프톤': 'SW/인터넷',
+        'KB금융': '금융', '신한지주': '금융', '하나금융지주': '금융', '메리츠금융지주': '금융', '삼성생명': '금융', '삼성물산': '금융',
+        'HD현대중공업': '물류/운송', 'HMM': '물류/운송', '대한항공': '물류/운송', '한화오션': '물류/운송',
+        '하이브': '엔터/미디어', 'JYP Ent.': '엔터/미디어', '에스엠': '엔터/미디어',
+        '현대건설': '건설/부동산', 'GS건설': '건설/부동산',
+        '한국전력': '유틸리티/에너지', '한국가스공사': '유틸리티/에너지'
     }
     
     try:
-        # 💡 2순위: 정확한 산업 분류(Sector) 컬럼이 존재하는 KRX-DESC 데이터만 사용!
+        # 💡 2순위: DataFrame의 컬럼명이 한글/영어로 어떻게 바뀌든 추적해서 찾아내는 로직
         df = fdr.StockListing('KRX-DESC')
         
-        if 'Sector' in df.columns:
-            for name, sector in zip(df['Name'], df['Sector']):
-                s = str(sector).strip()
-                n = str(name).strip()
-                
-                # 이미 하드코딩으로 보호된 핵심 종목은 덮어쓰지 않음
-                if n in sector_dict: continue 
-                
-                if s == 'nan' or not s or s == 'None':
-                    sector_dict[n] = '기타분류'
-                elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기']):
-                    sector_dict[n] = 'IT/반도체'
-                elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판']):
-                    sector_dict[n] = 'SW/인터넷'
-                elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '조선']):
-                    sector_dict[n] = '자동차/모빌리티'
-                elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약']):
-                    sector_dict[n] = '바이오/헬스케어'
-                elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '지주']):
-                    sector_dict[n] = '금융'
-                elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학']):
-                    sector_dict[n] = '화학/2차전지'
-                elif any(k in s for k in ['금속', '철강', '비금속']):
-                    sector_dict[n] = '철강/금속'
-                elif any(k in s for k in ['건설', '토목', '부동산']):
-                    sector_dict[n] = '건설/부동산'
-                elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복']):
-                    sector_dict[n] = '유통/소비재'
-                elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락']):
-                    sector_dict[n] = '엔터/미디어'
-                elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']):
-                    sector_dict[n] = '물류/운송'
-                elif any(k in s for k in ['전기', '가스', '수도', '에너지']):
-                    sector_dict[n] = '유틸리티/에너지'
-                else:
-                    sector_dict[n] = '제조/기타산업'
+        if not df.empty:
+            # 대소문자 무시, 포함 여부로 유연하게 컬럼명 검색
+            name_col = next((c for c in df.columns if str(c).upper() in ['NAME', '종목명', '회사명']), None)
+            sector_col = next((c for c in df.columns if any(k in str(c).upper() for k in ['SECTOR', '업종', '산업'])), None)
+            
+            # 컬럼 두 개를 모두 찾았을 때만 파싱 시도 (KeyError 완벽 방어)
+            if name_col and sector_col:
+                for name, sector in zip(df[name_col], df[sector_col]):
+                    s = str(sector).strip()
+                    n = str(name).strip()
+                    
+                    if n in sector_dict: continue # 하드코딩된 핵심 주도주는 보호
+                    
+                    if s == 'nan' or not s or s == 'None':
+                        sector_dict[n] = '기타분류'
+                    elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기', '장비']):
+                        sector_dict[n] = 'IT/반도체'
+                    elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판', 'IT']):
+                        sector_dict[n] = 'SW/인터넷'
+                    elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '조선']):
+                        sector_dict[n] = '자동차/모빌리티'
+                    elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약', '의료기기']):
+                        sector_dict[n] = '바이오/헬스케어'
+                    elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '지주']):
+                        sector_dict[n] = '금융'
+                    elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학', '소재']):
+                        sector_dict[n] = '화학/2차전지'
+                    elif any(k in s for k in ['금속', '철강', '비금속']):
+                        sector_dict[n] = '철강/금속'
+                    elif any(k in s for k in ['건설', '토목', '부동산']):
+                        sector_dict[n] = '건설/부동산'
+                    elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복', '식품']):
+                        sector_dict[n] = '유통/소비재'
+                    elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락']):
+                        sector_dict[n] = '엔터/미디어'
+                    elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']):
+                        sector_dict[n] = '물류/운송'
+                    elif any(k in s for k in ['전기', '가스', '수도', '에너지']):
+                        sector_dict[n] = '유틸리티/에너지'
+                    else:
+                        sector_dict[n] = '제조/기타산업'
     except Exception as e: 
-        print(f"Sector map error: {e}")
-        # 에러가 나더라도 위에서 지정한 'sector_dict'의 핵심 20종목은 무조건 살아남음!
+        print(f"Sector map fetch error: {e}")
+        # 오류가 나더라도 예외 처리로 앱이 죽지 않으며, 방어막(sector_dict) 40개는 온전히 작동합니다.
         
     return sector_dict
 
@@ -707,12 +715,18 @@ with tab2:
     </div>
     """, unsafe_allow_html=True)
     
-    # 💡 [신규] 자산 배분(섹터/테마) 현황 파이 차트 렌더링
+    # 💡 [안전장치 추가] 파이 차트 렌더링 시 값이 모두 0원 이하일 경우의 에러 방지
     if not dis_df.empty:
         sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
-        fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
-        fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pie, use_container_width=True)
+        # 가치가 0보다 큰 항목만 필터링하여 에러 방지
+        sector_val = sector_val[sector_val['원화평가금액'] > 0]
+        
+        if not sector_val.empty:
+            fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
+            fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("💡 파이 차트를 그리려면 0원 이상의 포트폴리오 자산이 필요합니다.")
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
