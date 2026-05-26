@@ -327,7 +327,6 @@ def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
     
-    # 💡 1번 안전망: AI가 '투자 조언(Dangerous Content)'으로 오해하고 답변을 거부하는 현상 100% 방지
     safety_settings = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -347,8 +346,6 @@ def get_ai_analysis(prompt, api_key):
             if not text:
                 raise Exception("AI가 빈 응답을 반환했습니다.")
                 
-            # 💡 2번 안전망: AI가 JSON 양식을 어기고 마크다운(```json)이나 헛소리를 섞어 보내도 
-            # 무조건 중괄호 { } 안의 순수 데이터만 강제로 뜯어냄 (에러 방지)
             match = re.search(r'\{.*\}', text.strip(), re.DOTALL)
             if match:
                 text = match.group(0)
@@ -528,16 +525,17 @@ with tab1:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        st.markdown(f"""
-        <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>
-            <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>
-            <div style='display: flex; gap: 20px;'>
-                <div><span style='color: #94a3b8; font-size: 0.9em;'>누적 수익률:</span> <span style='color: {"#34d399" if stats["total_return"] > 0 else "#f87171"}; font-weight: bold;'>{stats['total_return']:.1f}%</span></div>
-                <div><span style='color: #94a3b8; font-size: 0.9em;'>승률:</span> <span style='color: #38bdf8; font-weight: bold;'>{stats['win_rate']:.1f}%</span></div>
-                <div><span style='color: #94a3b8; font-size: 0.9em;'>총 매매 횟수:</span> <span style='color: #f8fafc; font-weight: bold;'>{stats['total_trades']}회</span></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # 💡 [버그 완벽 수정] 마크다운 코드블록 버그를 유발하는 들여쓰기(Indentation) 제거
+        html_summary = (
+            "<div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #334155;'>"
+            "<h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 10px; font-size: 1rem;'>📊 시스템 백테스트 요약 (최근 2년)</h4>"
+            "<div style='display: flex; gap: 20px;'>"
+            f"<div><span style='color: #94a3b8; font-size: 0.9em;'>누적 수익률:</span> <span style='color: {'#34d399' if stats['total_return'] > 0 else '#f87171'}; font-weight: bold;'>{stats['total_return']:.1f}%</span></div>"
+            f"<div><span style='color: #94a3b8; font-size: 0.9em;'>승률:</span> <span style='color: #38bdf8; font-weight: bold;'>{stats['win_rate']:.1f}%</span></div>"
+            f"<div><span style='color: #94a3b8; font-size: 0.9em;'>총 매매 횟수:</span> <span style='color: #f8fafc; font-weight: bold;'>{stats['total_trades']}회</span></div>"
+            "</div></div>"
+        )
+        st.markdown(html_summary, unsafe_allow_html=True)
 
         ema5 = float(tech_ind['EMA5'])
         entry2 = float(tech_ind['EMA15'])
@@ -546,20 +544,19 @@ with tab1:
         stop_p = entry1 - (float(tech_ind['ATR']) * 2)
         trailing_stop = curr_p - (float(tech_ind['ATR']) * 2.5)
 
-        html_kpi = f"""
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px;">
-            <div class="kpi-card">
-                <div class="kpi-title">🎯 스마트 대기 타점 (눌림목)</div>
-                <div class="kpi-value-main kpi-highlight">1차: {format_price(entry1, ticker)}</div>
-                <div class="kpi-value-sub">2차: {format_price(entry2, ticker)} (15일선 지지)</div>
-            </div>
-            <div class="kpi-card" style="border-color: #f87171;">
-                <div class="kpi-title">🛡️ 목표 & 수익 보존 라인</div>
-                <div class="kpi-value-main" style="color: #60a5fa;">목표가: {format_price(tar_p, ticker)}</div>
-                <div class="kpi-value-sub text-red-400 font-bold" style="color:#f87171; font-weight:900;">✨트레일링스탑: {format_price(trailing_stop, ticker)}</div>
-            </div>
-        </div>
-        """
+        html_kpi = (
+            "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px;'>"
+            "<div class='kpi-card'>"
+            "<div class='kpi-title'>🎯 스마트 대기 타점 (눌림목)</div>"
+            f"<div class='kpi-value-main kpi-highlight'>1차: {format_price(entry1, ticker)}</div>"
+            f"<div class='kpi-value-sub'>2차: {format_price(entry2, ticker)} (15일선 지지)</div>"
+            "</div>"
+            "<div class='kpi-card' style='border-color: #f87171;'>"
+            "<div class='kpi-title'>🛡️ 목표 & 수익 보존 라인</div>"
+            f"<div class='kpi-value-main' style='color: #60a5fa;'>목표가: {format_price(tar_p, ticker)}</div>"
+            f"<div class='kpi-value-sub text-red-400 font-bold' style='color:#f87171; font-weight:900;'>✨트레일링스탑: {format_price(trailing_stop, ticker)}</div>"
+            "</div></div>"
+        )
         st.markdown(html_kpi, unsafe_allow_html=True)
 
         info_col1, info_col2 = st.columns(2)
@@ -576,23 +573,28 @@ with tab1:
                 rsi_state = "📉 RSI 과매도 바닥 턴어라운드 포착!" if tech_ind.get('RSI_Turnaround') else f"{rsi_val:.1f}"
                 bb_sig = "📉 스퀴즈 (응축 폭발전야!)" if tech_ind.get('BB_Is_Squeeze') else "📈 일반 확장"
                 
-                st.markdown(f"""
-                <div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-top: 15px; border-left: 4px solid #3b82f6;'>
-                    <div style='margin-bottom: 8px;'><b>RSI (14):</b> <span style='color: {rsi_color}; font-weight: bold;'>{rsi_state}</span></div>
-                    <div style='margin-bottom: 8px;'><b>MACD:</b> {macd_state}</div>
-                    <div><b>볼린저밴드:</b> <span style='color: #fbbf24;'>{bb_sig}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
+                html_indicators = (
+                    "<div style='background: #1e293b; padding: 15px; border-radius: 12px; margin-top: 15px; border-left: 4px solid #3b82f6;'>"
+                    f"<div style='margin-bottom: 8px;'><b>RSI (14):</b> <span style='color: {rsi_color}; font-weight: bold;'>{rsi_state}</span></div>"
+                    f"<div style='margin-bottom: 8px;'><b>MACD:</b> {macd_state}</div>"
+                    f"<div><b>볼린저밴드:</b> <span style='color: #fbbf24;'>{bb_sig}</span></div>"
+                    "</div>"
+                )
+                st.markdown(html_indicators, unsafe_allow_html=True)
                 
-                if tech_ind.get('Is_Above_Monthly_EMA10'): st.markdown(f"<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(52, 211, 153, 0.1); color: #34d399; font-weight: 600;'>🟢 월봉 10선 생명선 위 (안전구간)</div>", unsafe_allow_html=True)
-                else: st.markdown(f"<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(248, 113, 113, 0.1); color: #f87171; font-weight: 600;'>🔴 월봉 10선 생명선 이탈 (위험구간)</div>", unsafe_allow_html=True)
+                if tech_ind.get('Is_Above_Monthly_EMA10'): 
+                    st.markdown("<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(52, 211, 153, 0.1); color: #34d399; font-weight: 600;'>🟢 월봉 10선 생명선 위 (안전구간)</div>", unsafe_allow_html=True)
+                else: 
+                    st.markdown("<div style='margin-top: 15px; padding: 10px; border-radius: 8px; background: rgba(248, 113, 113, 0.1); color: #f87171; font-weight: 600;'>🔴 월봉 10선 생명선 이탈 (위험구간)</div>", unsafe_allow_html=True)
             
         with info_col2:
             st.markdown("<h4 style='color: #f8fafc; font-size: 1.1rem;'>📰 실시간 마켓 내러티브</h4>", unsafe_allow_html=True)
             news_list = get_recent_news(actual_name)[:4]
             news_html = "<div style='display: flex; flex-direction: column; gap: 8px;'>"
-            for news in news_list: news_html += f"<div style='background: #1e293b; padding: 10px; border-radius: 8px; font-size: 0.85em; color: #cbd5e1; border-left: 3px solid #64748b;'>{news}</div>"
-            st.markdown(news_html + "</div>", unsafe_allow_html=True)
+            for news in news_list: 
+                news_html += f"<div style='background: #1e293b; padding: 10px; border-radius: 8px; font-size: 0.85em; color: #cbd5e1; border-left: 3px solid #64748b;'>{news}</div>"
+            news_html += "</div>"
+            st.markdown(news_html, unsafe_allow_html=True)
             
             if st.button("📰 AI 뉴스 감성(Sentiment) 스코어 분석", use_container_width=True):
                 if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
@@ -601,13 +603,14 @@ with tab1:
                         sentiment_res = get_ai_analysis(f"다음 뉴스들의 전반적인 투자 감성을 0~100점으로 평가해줘. 형식(JSON): {{\"score\": 정수, \"verdict\": \"강력 매수/긍정적/중립/부정적/강력 매도\", \"summary\": \"3줄 요약\"}} 뉴스: {news_list}", gemini_api_key)
                         score = sentiment_res.get('score', 50)
                         bar_color = "#34d399" if score >= 60 else "#f87171" if score <= 40 else "#fbbf24"
-                        st.markdown(f"""
-                        <div style='background: #0f172a; border: 1px solid {bar_color}; padding: 15px; border-radius: 12px; margin-top: 15px;'>
-                            <h4 style='margin-top:0; color:{bar_color};'>🔥 AI 감성 스코어: {score}점 ({sentiment_res.get('verdict', '중립')})</h4>
-                            <div style='width: 100%; background-color: #334155; border-radius: 10px; height: 10px; margin-bottom: 10px;'><div style='width: {score}%; background-color: {bar_color}; height: 10px; border-radius: 10px;'></div></div>
-                            <p style='font-size:0.9em; color:#cbd5e1;'>{sentiment_res.get('summary', '')}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        html_sentiment = (
+                            f"<div style='background: #0f172a; border: 1px solid {bar_color}; padding: 15px; border-radius: 12px; margin-top: 15px;'>"
+                            f"<h4 style='margin-top:0; color:{bar_color};'>🔥 AI 감성 스코어: {score}점 ({sentiment_res.get('verdict', '중립')})</h4>"
+                            f"<div style='width: 100%; background-color: #334155; border-radius: 10px; height: 10px; margin-bottom: 10px;'><div style='width: {score}%; background-color: {bar_color}; height: 10px; border-radius: 10px;'></div></div>"
+                            f"<p style='font-size:0.9em; color:#cbd5e1;'>{sentiment_res.get('summary', '')}</p>"
+                            "</div>"
+                        )
+                        st.markdown(html_sentiment, unsafe_allow_html=True)
                     except Exception as e: st.error(f"분석 실패: {e}")
 
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
@@ -616,14 +619,14 @@ with tab1:
             with st.spinner("4명의 AI 전문가가 차트와 뉴스를 분석하며 토론 중입니다..."):
                 try:
                     res = get_ai_analysis(f"종목: {actual_name}, 뉴스: {news_list}, 월봉10선: {'안전' if tech_ind.get('Is_Above_Monthly_EMA10') else '위험'}, 성향: {st.session_state.invest_style}. 출력 형식(JSON): {{\"macroAgent\": {{\"score\": 80, \"reasoning\": \"...\"}}, \"technicalAgent\": {{\"score\": 70, \"reasoning\": \"...\"}}, \"fundamentalAgent\": {{\"score\": 60, \"reasoning\": \"...\"}}, \"riskManager\": {{\"action\": \"매수/관망/매도\", \"positionSize\": \"20%\", \"reasoning\": \"...\"}}}}", gemini_api_key)
-                    html_chat = f"""
-                    <div class="chat-container">
-                        <div class="chat-bubble chat-macro"><div class="chat-header"><span>🌍 Agent 1: 거시경제 전략가</span> <span class="score-badge">Score: {res['macroAgent']['score']}/100</span></div><div style="line-height: 1.6;">{res['macroAgent']['reasoning']}</div></div>
-                        <div class="chat-bubble chat-tech"><div class="chat-header"><span>📈 Agent 2: 기술적 분석가</span> <span class="score-badge">Score: {res['technicalAgent']['score']}/100</span></div><div style="line-height: 1.6;">{res['technicalAgent']['reasoning']}</div></div>
-                        <div class="chat-bubble chat-funda"><div class="chat-header"><span>📰 Agent 3: 펀더멘털 매니저</span> <span class="score-badge">Score: {res['fundamentalAgent']['score']}/100</span></div><div style="line-height: 1.6;">{res['fundamentalAgent']['reasoning']}</div></div>
-                        <div class="chat-bubble chat-risk"><div class="chat-header"><span>🛡️ Agent 4: 리스크 총괄 (최종 판단)</span> <span class="score-badge score-badge-risk">포지션: {res['riskManager']['action']} | 비중: {res['riskManager']['positionSize']}</span></div><div style="font-weight: 600; color: #fca5a5; line-height: 1.6;">{res['riskManager']['reasoning']}</div></div>
-                    </div>
-                    """
+                    html_chat = (
+                        "<div class='chat-container'>"
+                        f"<div class='chat-bubble chat-macro'><div class='chat-header'><span>🌍 Agent 1: 거시경제 전략가</span> <span class='score-badge'>Score: {res.get('macroAgent', {}).get('score', 0)}/100</span></div><div style='line-height: 1.6;'>{res.get('macroAgent', {}).get('reasoning', '')}</div></div>"
+                        f"<div class='chat-bubble chat-tech'><div class='chat-header'><span>📈 Agent 2: 기술적 분석가</span> <span class='score-badge'>Score: {res.get('technicalAgent', {}).get('score', 0)}/100</span></div><div style='line-height: 1.6;'>{res.get('technicalAgent', {}).get('reasoning', '')}</div></div>"
+                        f"<div class='chat-bubble chat-funda'><div class='chat-header'><span>📰 Agent 3: 펀더멘털 매니저</span> <span class='score-badge'>Score: {res.get('fundamentalAgent', {}).get('score', 0)}/100</span></div><div style='line-height: 1.6;'>{res.get('fundamentalAgent', {}).get('reasoning', '')}</div></div>"
+                        f"<div class='chat-bubble chat-risk'><div class='chat-header'><span>🛡️ Agent 4: 리스크 총괄 (최종 판단)</span> <span class='score-badge score-badge-risk'>포지션: {res.get('riskManager', {}).get('action', '')} | 비중: {res.get('riskManager', {}).get('positionSize', '')}</span></div><div style='font-weight: 600; color: #fca5a5; line-height: 1.6;'>{res.get('riskManager', {}).get('reasoning', '')}</div></div>"
+                        "</div>"
+                    )
                     st.markdown(html_chat, unsafe_allow_html=True)
                 except Exception as e: st.error(f"분석 오류: {e}")
 
@@ -711,14 +714,15 @@ with tab2:
         dis_df['섹터'] = [ '해외주식' if c == 'USD' else sector_map.get(n, '기타분류') for c, n in zip(currencies, dis_df['종목명']) ]
         dis_df['원화평가금액'] = [ p * (usd_krw if c == 'USD' else 1.0) for p, c in zip(dis_df['평가금액'], currencies) ]
 
-    st.markdown(f"""
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
-        <div class="kpi-card" style="padding: 15px;"><div class="kpi-title">💵 보유 현금</div><div class="kpi-value-main" style="font-size: 1.4rem;">{int(remaining_cash):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px;"><div class="kpi-title">📦 투자 원금</div><div class="kpi-value-main" style="font-size: 1.4rem;">{int(total_invested_krw):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px; border-color: #38bdf8;"><div class="kpi-title">💎 총 자산</div><div class="kpi-value-main" style="font-size: 1.4rem; color: #38bdf8;">{int(total_asset_value_krw):,}원</div></div>
-        <div class="kpi-card" style="padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};"><div class="kpi-title">📈 평가 손익</div><div class="kpi-value-main" style="font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};">{int(total_unrealized_profit_krw):,}원</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    html_portfolio_kpi = (
+        "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;'>"
+        f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>💵 보유 현금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(remaining_cash):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>📦 투자 원금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(total_invested_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: #38bdf8;'><div class='kpi-title'>💎 총 자산</div><div class='kpi-value-main' style='font-size: 1.4rem; color: #38bdf8;'>{int(total_asset_value_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
+        "</div>"
+    )
+    st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
     
     if not dis_df.empty:
         sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
@@ -728,6 +732,8 @@ with tab2:
             fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
             fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("💡 파이 차트를 그리려면 0원 이상의 포트폴리오 자산이 필요합니다.")
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
@@ -798,7 +804,6 @@ with tab2:
             p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
             save_portfolio(p_data); st.rerun()
             
-        # 💡 [핵심 버그 수정] VVIP 리포트 에러 완전 차단 코어 적용!
         st.markdown("<h3 style='color: #38bdf8; margin-top:40px;'>🤖 AI VVIP 펀드매니저 리밸런싱 리포트</h3>", unsafe_allow_html=True)
         if st.button("🚀 포트폴리오 종합 진단 및 비중 조절 조언 받기", type="primary", use_container_width=True):
             if not gemini_api_key: 
@@ -832,23 +837,19 @@ with tab2:
                     rebalancing_strategy = res.get('rebalancing_strategy', '전략을 분석할 수 없습니다.')
                     action_items = res.get('action_items', [])
                     
-                    # 💡 방어막 3: AI가 목록이 아닌 텍스트로 보냈을 때 앱 다운 방지
-                    if isinstance(action_items, dict):
-                        action_items = [action_items]
-                    elif isinstance(action_items, str) or not isinstance(action_items, list):
-                        action_items = []
+                    if isinstance(action_items, dict): action_items = [action_items]
+                    elif isinstance(action_items, str) or not isinstance(action_items, list): action_items = []
                     
-                    html_report = f"""
-                    <div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>
-                        <h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'>🩺 포트폴리오 종합 진단</h4>
-                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;'>{portfolio_health}</p>
-                        
-                        <h4 style='color: #fbbf24; font-size: 1.2rem;'>⚖️ 핵심 리밸런싱 전략</h4>
-                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 25px;'>{rebalancing_strategy}</p>
-                        
-                        <h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'>🎯 종목별 액션 플랜</h4>
-                        <div style='display: flex; flex-direction: column; gap: 12px;'>
-                    """
+                    # 💡 [버그 완벽 차단] 줄바꿈 시 들여쓰기를 하지 않아 마크다운 엔진이 코드블록으로 오인하는 것을 방지!
+                    html_report = (
+                        "<div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>"
+                        "<h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'>🩺 포트폴리오 종합 진단</h4>"
+                        f"<p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;'>{portfolio_health}</p>"
+                        "<h4 style='color: #fbbf24; font-size: 1.2rem;'>⚖️ 핵심 리밸런싱 전략</h4>"
+                        f"<p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 25px;'>{rebalancing_strategy}</p>"
+                        "<h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'>🎯 종목별 액션 플랜</h4>"
+                        "<div style='display: flex; flex-direction: column; gap: 12px;'>"
+                    )
                     
                     if not action_items:
                         html_report += "<div style='color: #94a3b8; font-size: 0.95rem; padding: 10px;'>💡 현재 포트폴리오 구조에서는 특별한 비중 조절(리밸런싱) 액션이 필요하지 않거나, AI가 상세 종목 분석을 보류했습니다.</div>"
@@ -859,13 +860,15 @@ with tab2:
                             action = str(item.get('action', '유지'))
                             reasoning = str(item.get('reasoning', ''))
                             action_color = "#34d399" if "확대" in action else "#f87171" if "축소" in action or "매도" in action else "#94a3b8"
-                            html_report += f"""
-                                <div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>
-                                    <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{stock_name}</span> 
-                                    <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{action}</span>
-                                    <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{reasoning}</p>
-                                </div>
-                            """
+                            
+                            html_report += (
+                                f"<div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>"
+                                f"<span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{stock_name}</span> "
+                                f"<span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{action}</span>"
+                                f"<p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{reasoning}</p>"
+                                "</div>"
+                            )
+                            
                     html_report += "</div></div>"
                     st.markdown(html_report, unsafe_allow_html=True)
                     st.success("✅ VVIP AI 펀드매니저 리포트 생성이 완료되었습니다.")
