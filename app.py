@@ -174,7 +174,6 @@ def save_portfolio(data):
         except: pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
-# 💡 가계부 기록 로드/저장 함수
 def load_ledger():
     if db:
         try:
@@ -244,10 +243,8 @@ def get_stock_info(query):
         
     return query, query if query.isdigit() else None
 
-# 💡 [에러 완벽 차단] 초강력 스마트 섹터 그룹핑 엔진
 @st.cache_data(ttl=86400)
 def get_sector_map():
-    # 💡 1순위 안전망: 데이터가 뻗어도 웬만한 우량주는 커버하는 방어막 (하드코딩)
     sector_dict = {
         '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체', '리노공업': 'IT/반도체', 'HPSP': 'IT/반도체',
         '현대차': '자동차/모빌리티', '기아': '자동차/모빌리티', '현대모비스': '자동차/모빌리티',
@@ -260,56 +257,31 @@ def get_sector_map():
         '현대건설': '건설/부동산', 'GS건설': '건설/부동산',
         '한국전력': '유틸리티/에너지', '한국가스공사': '유틸리티/에너지'
     }
-    
     try:
-        # 💡 2순위: DataFrame의 컬럼명이 한글/영어로 어떻게 바뀌든 추적해서 찾아내는 로직
         df = fdr.StockListing('KRX-DESC')
-        
         if not df.empty:
-            # 대소문자 무시, 포함 여부로 유연하게 컬럼명 검색
             name_col = next((c for c in df.columns if str(c).upper() in ['NAME', '종목명', '회사명']), None)
             sector_col = next((c for c in df.columns if any(k in str(c).upper() for k in ['SECTOR', '업종', '산업'])), None)
-            
-            # 컬럼 두 개를 모두 찾았을 때만 파싱 시도 (KeyError 완벽 방어)
             if name_col and sector_col:
                 for name, sector in zip(df[name_col], df[sector_col]):
                     s = str(sector).strip()
                     n = str(name).strip()
-                    
-                    if n in sector_dict: continue # 하드코딩된 핵심 주도주는 보호
-                    
-                    if s == 'nan' or not s or s == 'None':
-                        sector_dict[n] = '기타분류'
-                    elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기', '장비']):
-                        sector_dict[n] = 'IT/반도체'
-                    elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판', 'IT']):
-                        sector_dict[n] = 'SW/인터넷'
-                    elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '조선']):
-                        sector_dict[n] = '자동차/모빌리티'
-                    elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약', '의료기기']):
-                        sector_dict[n] = '바이오/헬스케어'
-                    elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '지주']):
-                        sector_dict[n] = '금융'
-                    elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학', '소재']):
-                        sector_dict[n] = '화학/2차전지'
-                    elif any(k in s for k in ['금속', '철강', '비금속']):
-                        sector_dict[n] = '철강/금속'
-                    elif any(k in s for k in ['건설', '토목', '부동산']):
-                        sector_dict[n] = '건설/부동산'
-                    elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복', '식품']):
-                        sector_dict[n] = '유통/소비재'
-                    elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락']):
-                        sector_dict[n] = '엔터/미디어'
-                    elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']):
-                        sector_dict[n] = '물류/운송'
-                    elif any(k in s for k in ['전기', '가스', '수도', '에너지']):
-                        sector_dict[n] = '유틸리티/에너지'
-                    else:
-                        sector_dict[n] = '제조/기타산업'
-    except Exception as e: 
-        print(f"Sector map fetch error: {e}")
-        # 오류가 나더라도 예외 처리로 앱이 죽지 않으며, 방어막(sector_dict) 40개는 온전히 작동합니다.
-        
+                    if n in sector_dict: continue 
+                    if s == 'nan' or not s or s == 'None': sector_dict[n] = '기타분류'
+                    elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기', '장비']): sector_dict[n] = 'IT/반도체'
+                    elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판', 'IT']): sector_dict[n] = 'SW/인터넷'
+                    elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '조선']): sector_dict[n] = '자동차/모빌리티'
+                    elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약', '의료기기']): sector_dict[n] = '바이오/헬스케어'
+                    elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '지주']): sector_dict[n] = '금융'
+                    elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학', '소재']): sector_dict[n] = '화학/2차전지'
+                    elif any(k in s for k in ['금속', '철강', '비금속']): sector_dict[n] = '철강/금속'
+                    elif any(k in s for k in ['건설', '토목', '부동산']): sector_dict[n] = '건설/부동산'
+                    elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복', '식품']): sector_dict[n] = '유통/소비재'
+                    elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락']): sector_dict[n] = '엔터/미디어'
+                    elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']): sector_dict[n] = '물류/운송'
+                    elif any(k in s for k in ['전기', '가스', '수도', '에너지']): sector_dict[n] = '유틸리티/에너지'
+                    else: sector_dict[n] = '제조/기타산업'
+    except: pass
     return sector_dict
 
 @st.cache_data(ttl=86400)
@@ -349,69 +321,104 @@ def get_recent_news(keyword):
         return [item.title.text for item in soup.find_all('item')[:5] if item.title]
     except: return ["뉴스 수집 오류"]
 
+# 💡 [핵심 버그 수정] VVIP 리포트 에러를 원천 차단하는 궁극의 AI 요청 함수
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    # 💡 1번 안전망: AI가 '투자 조언(Dangerous Content)'으로 오해하고 답변을 거부하는 현상 100% 방지
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
+    
     for attempt in range(5):
         try:
-            res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-            return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+            res = model.generate_content(
+                prompt, 
+                generation_config={"response_mime_type": "application/json"},
+                safety_settings=safety_settings
+            )
+            
+            text = res.text
+            if not text:
+                raise Exception("AI가 빈 응답을 반환했습니다.")
+                
+            # 💡 2번 안전망: AI가 JSON 양식을 어기고 마크다운(```json)이나 헛소리를 섞어 보내도 
+            # 무조건 중괄호 { } 안의 순수 데이터만 강제로 뜯어냄 (에러 방지)
+            match = re.search(r'\{.*\}', text.strip(), re.DOTALL)
+            if match:
+                text = match.group(0)
+                
+            return json.loads(text)
         except Exception as e:
-            if attempt < 4: time.sleep(2); continue
-            raise e
+            if attempt < 4: 
+                time.sleep(2)
+                continue
+            raise Exception(f"API 응답 분석 실패 ({str(e)})")
 
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
     df = df[~df.index.duplicated(keep='first')].dropna(subset=['Close'])
     if len(df) < 200: return None, {}
     
-    df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
-    df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
-    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
-    df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
-    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
-    
-    delta = df['Close'].diff()
-    df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
-    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal'] 
-    
-    recent_60 = df.tail(60)
-    df['Vol_Ref_Price'] = float(df['Close'].iloc[-1]) if recent_60['Volume'].sum() == 0 else float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
-    
-    tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(window=14).mean()
-    
     try:
-        prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
-        today_vol = df['Volume'].iloc[-1]
-        is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
-    except:
-        is_vol_explosion = False
+        df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
+        df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
+        df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+        df['BB_Std'] = df['Close'].rolling(window=20).std()
+        df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
+        df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
+        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
         
-    latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
-    try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
-    except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
-    
-    indicators = {
-        "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), 
-        "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
-        "BB_Is_Squeeze": bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8),
-        "Monthly_EMA10": current_monthly_ema10, "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
-        "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
-        "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
-        "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
-        "Volume_Explosion": is_vol_explosion,
-        "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
-    }
-    return df, indicators
+        delta = df['Close'].diff()
+        df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
+        df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal'] 
+        
+        recent_60 = df.tail(60)
+        
+        if 'Volume' in df.columns and recent_60['Volume'].sum() > 0:
+            df['Vol_Ref_Price'] = float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
+        else:
+            df['Vol_Ref_Price'] = float(df['Close'].iloc[-1])
+            
+        tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+        df['ATR'] = tr.rolling(window=14).mean()
+        
+        is_vol_explosion = False
+        if 'Volume' in df.columns:
+            try:
+                prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
+                today_vol = df['Volume'].iloc[-1]
+                is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
+            except: pass
+            
+        latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
+        try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
+        except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
+        
+        indicators = {
+            "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), 
+            "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
+            "BB_Is_Squeeze": bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8),
+            "Monthly_EMA10": current_monthly_ema10, "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
+            "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
+            "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
+            "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
+            "Volume_Explosion": is_vol_explosion,
+            "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
+        }
+        return df, indicators
+    except Exception as e:
+        print(f"Indicator calculation error: {e}")
+        return None, {}
 
-# 💡 백테스트 및 매수/매도 마커 엔진
 def run_backtest_with_markers(df):
     trades = []; position = 0; entry_price = 0; entry_atr = 0; balance = 10000000 
     buy_dates=[]; buy_prices=[]; sell_dates=[]; sell_prices=[]
@@ -445,7 +452,7 @@ def run_backtest_with_markers(df):
 def format_price(price, ticker): return f"{int(price):,}원" if str(ticker).isdigit() else f"${price:,.2f}"
 
 def send_telegram_message(token, chat_id, text):
-    try: return requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
+    try: return requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5).status_code == 200
     except: return False
 
 @st.cache_data(ttl=3600)
@@ -632,7 +639,6 @@ with tab2:
     with col_t1: st.markdown(f"<h3 style='color: #f8fafc;'>💼 {st.session_state.user_id}님의 퀀트 포트폴리오</h3>", unsafe_allow_html=True)
     with col_t2: st.markdown(f"<div style='text-align:right; margin-top:20px; font-size:0.9em; color:#94a3b8;'>현재 환율 적용: <span style='color:#38bdf8; font-weight:bold;'>1 USD = {int(usd_krw):,}원</span></div>", unsafe_allow_html=True)
     
-    # 💡 월별 수익 리포트 (가계부 기능)
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
@@ -701,7 +707,6 @@ with tab2:
         dis_df['🛡️손절/익절가'] = trailing_stops 
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
         
-        # 💡 [신규] 섹터 분류 및 원화 환산 평가금액 데이터 추가
         sector_map = get_sector_map()
         dis_df['섹터'] = [ '해외주식' if c == 'USD' else sector_map.get(n, '기타분류') for c, n in zip(currencies, dis_df['종목명']) ]
         dis_df['원화평가금액'] = [ p * (usd_krw if c == 'USD' else 1.0) for p, c in zip(dis_df['평가금액'], currencies) ]
@@ -715,18 +720,14 @@ with tab2:
     </div>
     """, unsafe_allow_html=True)
     
-    # 💡 [안전장치 추가] 파이 차트 렌더링 시 값이 모두 0원 이하일 경우의 에러 방지
     if not dis_df.empty:
         sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
-        # 가치가 0보다 큰 항목만 필터링하여 에러 방지
         sector_val = sector_val[sector_val['원화평가금액'] > 0]
         
         if not sector_val.empty:
             fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
             fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info("💡 파이 차트를 그리려면 0원 이상의 포트폴리오 자산이 필요합니다.")
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
@@ -759,7 +760,6 @@ with tab2:
                         p_data['stocks'][idx]['수량'] -= s_q
                         if p_data['stocks'][idx]['수량'] <= 0: p_data['stocks'].pop(idx)
                         
-                        # 💡 가계부에 매도 기록 추가
                         new_record = {
                             'id': str(time.time()),
                             'date': datetime.now().strftime('%Y-%m-%d %H:%M'),
@@ -798,10 +798,13 @@ with tab2:
             p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
             save_portfolio(p_data); st.rerun()
             
-        # 💡 [신규] AI VVIP 펀드매니저 종합 리밸런싱 리포트
+        # 💡 [핵심 버그 수정] VVIP 리포트 에러 완전 차단 코어 적용!
         st.markdown("<h3 style='color: #38bdf8; margin-top:40px;'>🤖 AI VVIP 펀드매니저 리밸런싱 리포트</h3>", unsafe_allow_html=True)
         if st.button("🚀 포트폴리오 종합 진단 및 비중 조절 조언 받기", type="primary", use_container_width=True):
-            if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
+            if not gemini_api_key: 
+                st.error("위쪽 시스템 설정에서 API Key를 입력하세요!")
+                st.stop()
+                
             with st.spinner("AI 펀드매니저가 고객님의 자산 비중과 글로벌 시장 동향을 매칭하여 분석 중입니다..."):
                 port_summary = dis_df[['종목명', '섹터', '수익률(%)', '원화평가금액']].to_dict('records')
                 news_summary = get_recent_news("주식 시장 시황")
@@ -813,7 +816,7 @@ with tab2:
                 고객 포트폴리오 현황: {port_summary}
                 
                 이 데이터를 바탕으로 현재 포트폴리오의 건강 상태, 섹터 쏠림 현상 여부, 그리고 종목별 구체적인 리밸런싱(비중 축소/확대) 조언을 분석해주세요.
-                출력 형식(JSON): 
+                [중요] 반드시 아래에 제시된 JSON 형식만을 출력해야 하며, 다른 부가적인 텍스트나 마크다운 기호는 일절 포함하지 마세요.
                 {{
                     "portfolio_health": "포트폴리오 종합 평가 및 섹터 분산도 평가 (3문장 내외)",
                     "rebalancing_strategy": "시장 상황에 따른 전체 비중 조절 전략 (2문장 내외)",
@@ -829,6 +832,12 @@ with tab2:
                     rebalancing_strategy = res.get('rebalancing_strategy', '전략을 분석할 수 없습니다.')
                     action_items = res.get('action_items', [])
                     
+                    # 💡 방어막 3: AI가 목록이 아닌 텍스트로 보냈을 때 앱 다운 방지
+                    if isinstance(action_items, dict):
+                        action_items = [action_items]
+                    elif isinstance(action_items, str) or not isinstance(action_items, list):
+                        action_items = []
+                    
                     html_report = f"""
                     <div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>
                         <h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'>🩺 포트폴리오 종합 진단</h4>
@@ -840,23 +849,29 @@ with tab2:
                         <h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'>🎯 종목별 액션 플랜</h4>
                         <div style='display: flex; flex-direction: column; gap: 12px;'>
                     """
-                    for item in action_items:
-                        stock_name = str(item.get('stock', '알수없음'))
-                        action = str(item.get('action', '유지'))
-                        reasoning = str(item.get('reasoning', ''))
-                        action_color = "#34d399" if "확대" in action else "#f87171" if "축소" in action or "매도" in action else "#94a3b8"
-                        html_report += f"""
-                            <div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>
-                                <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{stock_name}</span> 
-                                <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{action}</span>
-                                <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{reasoning}</p>
-                            </div>
-                        """
+                    
+                    if not action_items:
+                        html_report += "<div style='color: #94a3b8; font-size: 0.95rem; padding: 10px;'>💡 현재 포트폴리오 구조에서는 특별한 비중 조절(리밸런싱) 액션이 필요하지 않거나, AI가 상세 종목 분석을 보류했습니다.</div>"
+                    else:
+                        for item in action_items:
+                            if not isinstance(item, dict): continue
+                            stock_name = str(item.get('stock', '알수없음'))
+                            action = str(item.get('action', '유지'))
+                            reasoning = str(item.get('reasoning', ''))
+                            action_color = "#34d399" if "확대" in action else "#f87171" if "축소" in action or "매도" in action else "#94a3b8"
+                            html_report += f"""
+                                <div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>
+                                    <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{stock_name}</span> 
+                                    <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{action}</span>
+                                    <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{reasoning}</p>
+                                </div>
+                            """
                     html_report += "</div></div>"
                     st.markdown(html_report, unsafe_allow_html=True)
                     st.success("✅ VVIP AI 펀드매니저 리포트 생성이 완료되었습니다.")
                 except Exception as e:
-                    st.error(f"🚨 AI 분석 중 오류가 발생했습니다: {e}")
+                    st.error(f"🚨 AI 분석 중 오류가 발생했습니다: {str(e)}")
+                    st.warning("💡 포트폴리오에 보유 종목이 하나밖에 없거나 구글 AI 서버가 일시적인 혼잡 상태일 수 있습니다. 잠시 후 버튼을 다시 눌러주세요.")
 
 # -----------------------------------------------------
 # [탭 3] VIP 스크리너 
@@ -870,7 +885,9 @@ with tab3:
     
     if st.button("🔎 딥 스캔 실행", type="primary", use_container_width=True):
         if "VIP" in mode and st.session_state.user_tier not in ['VIP', 'Admin']:
-            st.markdown("<div class='paywall-box'><h4>🔒 VIP 전용 기능</h4></div>", unsafe_allow_html=True); st.stop()
+            st.error("🔒 **VIP 전용 기능입니다!**\n\n좌측 상단의 **[계정 관리]** 메뉴에서 로그인하시거나, 무료 모드(한국 우량주)를 선택해 주세요.")
+            st.warning("💡 테스트를 원하시면 위에 있는 '⚡ 한국 우량주 40종목 (무료)' 모드를 선택하고 검색해보세요.")
+            st.stop()
             
         with st.spinner("빅데이터 필터링 중..."):
             if "우량주" in mode: sl = {"삼성전자":"005930", "SK하이닉스":"000660", "카카오":"035720", "현대차":"005380", "NAVER":"035420", "기아":"000270", "셀트리온":"068270", "KB금융":"105560", "POSCO홀딩스":"005490", "LG화학":"051910"}
@@ -886,12 +903,18 @@ with tab3:
                 except: pass
             
             res = []; bar = st.progress(0); txt = st.empty()
+            total_stocks = len(sl) if sl else 1
+            
             for i, (n, c) in enumerate(sl.items()):
-                txt.text(f"스캔 중... [{n}]")
+                txt.text(f"스캔 중... [{n}] ({i+1}/{total_stocks})")
                 try:
-                    df, ind = calculate_cloud_indicators(fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d')))
+                    df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+                    df, ind = calculate_cloud_indicators(df)
+                    
                     if ind:
-                        recent_amount = (df['Close'].tail(5) * df['Volume'].tail(5)).mean()
+                        recent_amount = 0
+                        if 'Volume' in df.columns:
+                            recent_amount = (df['Close'].tail(5) * df['Volume'].tail(5)).mean()
                         marcap = marcap_dict.get(c, 0)
                         
                         if use_liquidity_filter and "미국" not in mode:
@@ -930,18 +953,22 @@ with tab3:
                                 "MACD": "🟢 상승" if ind.get("MACD_Cross", False) else "🔴 하락",
                                 "볼린저상태": "🚨 스퀴즈" if ind.get("BB_Is_Squeeze") else "확장",
                                 "시총(억)": int(marcap / 100000000) if marcap > 0 else 0,
-                                "거래대금(억)": int(recent_amount / 100000000)
+                                "거래대금(억)": int(recent_amount / 100000000) if not pd.isna(recent_amount) else 0
                             })
-                except: pass
-                bar.progress((i+1)/len(sl))
+                except Exception as e:
+                    pass
+                
+                safe_progress = min((i + 1) / total_stocks, 1.0)
+                if 0.0 <= safe_progress <= 1.0:
+                    bar.progress(safe_progress)
+                    
             txt.text("✅ 스캔 완료!")
             
             if res:
                 df_res = pd.DataFrame(res)
                 
-                df_res = df_res.replace([np.inf, -np.inf], 0).fillna(0)
-                for col in ["현재가", "1차타점(대기)", "목표가", "손절가", "손익비(배)", "RSI", "시총(억)", "거래대금(억)"]:
-                    df_res[col] = pd.to_numeric(df_res[col], errors='coerce').fillna(0)
+                num_cols = df_res.select_dtypes(include=[np.number]).columns
+                df_res[num_cols] = df_res[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
                 
                 st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
                 
@@ -996,7 +1023,8 @@ with tab3:
                         send_telegram_message(tele_token, tele_chat_id, c)
                         time.sleep(0.3)
                     st.success("📱 텔레그램 전송 완료!")
-            else: st.warning("월봉 10선 위 안전한 타점이 없습니다.")
+            else: 
+                st.info("💡 스캔을 완료했으나, 현재 조건(월봉 10선 위 안전구간)을 통과한 종목이 없습니다.")
 
 # -----------------------------------------------------
 # [탭 4] Admin (최고 관리자 DB 관리 시스템)
