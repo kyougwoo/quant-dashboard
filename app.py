@@ -811,31 +811,38 @@ with tab2:
                 try:
                     res = get_ai_analysis(prompt, gemini_api_key)
                     
+                    portfolio_health = res.get('portfolio_health', '포트폴리오 상태를 분석할 수 없습니다.')
+                    rebalancing_strategy = res.get('rebalancing_strategy', '전략을 분석할 수 없습니다.')
+                    action_items = res.get('action_items', [])
+                    
                     html_report = f"""
                     <div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>
-                        <h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'><i class='fas fa-stethoscope'></i> 포트폴리오 종합 진단</h4>
-                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;'>{res['portfolio_health']}</p>
+                        <h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'>🩺 포트폴리오 종합 진단</h4>
+                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;'>{portfolio_health}</p>
                         
-                        <h4 style='color: #fbbf24; font-size: 1.2rem;'><i class='fas fa-balance-scale'></i> 핵심 리밸런싱 전략</h4>
-                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 25px;'>{res['rebalancing_strategy']}</p>
+                        <h4 style='color: #fbbf24; font-size: 1.2rem;'>⚖️ 핵심 리밸런싱 전략</h4>
+                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 25px;'>{rebalancing_strategy}</p>
                         
-                        <h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'><i class='fas fa-crosshairs'></i> 종목별 액션 플랜</h4>
+                        <h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'>🎯 종목별 액션 플랜</h4>
                         <div style='display: flex; flex-direction: column; gap: 12px;'>
                     """
-                    for item in res['action_items']:
-                        action_color = "#34d399" if "확대" in item['action'] else "#f87171" if "축소" in item['action'] or "매도" in item['action'] else "#94a3b8"
+                    for item in action_items:
+                        stock_name = str(item.get('stock', '알수없음'))
+                        action = str(item.get('action', '유지'))
+                        reasoning = str(item.get('reasoning', ''))
+                        action_color = "#34d399" if "확대" in action else "#f87171" if "축소" in action or "매도" in action else "#94a3b8"
                         html_report += f"""
                             <div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>
-                                <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{item['stock']}</span> 
-                                <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{item['action']}</span>
-                                <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{item['reasoning']}</p>
+                                <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{stock_name}</span> 
+                                <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{action}</span>
+                                <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{reasoning}</p>
                             </div>
                         """
                     html_report += "</div></div>"
                     st.markdown(html_report, unsafe_allow_html=True)
                     st.success("✅ VVIP AI 펀드매니저 리포트 생성이 완료되었습니다.")
                 except Exception as e:
-                    st.error(f"AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+                    st.error(f"🚨 AI 분석 중 오류가 발생했습니다: {e}")
 
 # -----------------------------------------------------
 # [탭 3] VIP 스크리너 
