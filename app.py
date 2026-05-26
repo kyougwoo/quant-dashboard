@@ -174,8 +174,24 @@ def save_portfolio(data):
         except: pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
+# 💡 가계부 기록 로드/저장 함수
+def load_ledger():
+    if db:
+        try:
+            doc = db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).get()
+            return doc.to_dict() if doc.exists else {'history': []}
+        except: return {'history': []}
+    return {'history': []}
+
+def save_ledger(data):
+    if db:
+        try: db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
+        except: pass
+
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
+if 'ledger_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
+    st.session_state.ledger_data = load_ledger()
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
@@ -227,6 +243,14 @@ def get_stock_info(query):
         return query, query
         
     return query, query if query.isdigit() else None
+
+# 💡 [신규] 주식의 섹터(테마) 정보를 불러오는 함수 추가
+@st.cache_data(ttl=86400)
+def get_sector_map():
+    try:
+        df = fdr.StockListing('KRX')
+        return dict(zip(df['Name'], df['Sector'].fillna('기타분류')))
+    except: return {}
 
 @st.cache_data(ttl=86400)
 def get_top_200_stocks():
@@ -371,13 +395,12 @@ def get_current_price(ticker):
         return float(df['Close'].iloc[-1]) if not df.empty else 0.0
     except: return 0.0
 
-# 💡 [신규] 실시간 원달러 환율 불러오기 (미국 주식 자산 환산용)
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
         df = fdr.DataReader('USD/KRW', (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
         return float(df['Close'].iloc[-1])
-    except: return 1350.0 # 에러 시 기본값
+    except: return 1350.0
 
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "영풍", "애플(AAPL)"])
@@ -538,21 +561,43 @@ with tab1:
                 except Exception as e: st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리 (실시간 환율 반영 엔진 탑재)
+# [탭 2] 포트폴리오 관리 & 가계부
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
-    usd_krw = get_exchange_rate() # 💡 실시간 환율 호출
+    ledger_data = st.session_state.ledger_data
+    usd_krw = get_exchange_rate()
     
     col_t1, col_t2 = st.columns([3, 1])
     with col_t1: st.markdown(f"<h3 style='color: #f8fafc;'>💼 {st.session_state.user_id}님의 퀀트 포트폴리오</h3>", unsafe_allow_html=True)
     with col_t2: st.markdown(f"<div style='text-align:right; margin-top:20px; font-size:0.9em; color:#94a3b8;'>현재 환율 적용: <span style='color:#38bdf8; font-weight:bold;'>1 USD = {int(usd_krw):,}원</span></div>", unsafe_allow_html=True)
     
+    # 💡 월별 수익 리포트 (가계부 기능)
+    with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
+        history_df = pd.DataFrame(ledger_data.get('history', []))
+        if not history_df.empty:
+            history_df['date'] = pd.to_datetime(history_df['date'])
+            monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
+            monthly_profit['date'] = monthly_profit['date'].astype(str)
+            
+            fig = go.Figure()
+            colors = ['#34d399' if p > 0 else '#f87171' for p in monthly_profit['profit_krw']]
+            fig.add_trace(go.Bar(x=monthly_profit['date'], y=monthly_profit['profit_krw'], marker_color=colors, text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], textposition='auto'))
+            fig.update_layout(template="plotly_dark", title="월별 누적 실현 수익금", height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("#### 📝 최근 매도 기록 (가계부)")
+            st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
+                         column_config={"date": "매도일자", "ticker": "종목", "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d"), "memo": "메모"}, hide_index=True, use_container_width=True)
+        else:
+            st.info("아직 수익 실현 기록이 없습니다. 첫 매도를 통해 가계부를 채워보세요!")
+            
+    st.markdown("---")
+    
     with st.expander("💰 초기 자본금 세팅 (원화 기준)", expanded=(p_data['initial_capital'] == 0)):
         new_cap = st.number_input("초기 자본금 (원화)", value=int(p_data['initial_capital']), step=1000000)
         if st.button("저장"): p_data['initial_capital'] = new_cap; save_portfolio(p_data); st.rerun()
 
-    # 💡 [업데이트] 환율을 반영한 투자 원금 원화 환산
     total_invested_krw = 0
     for r in p_data['stocks']:
         _, tck = get_stock_info(r['종목명'])
@@ -575,7 +620,6 @@ with tab2:
             
             p = get_current_price(tck) if tck else 0.0
             
-            # 수익금 및 수익률은 입력된 통화(원/달러) 기준으로 계산
             prof = (p - r['매수단가']) * r['수량']
             rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             
@@ -589,7 +633,6 @@ with tab2:
                 
             prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop); currencies.append("USD" if is_us else "KRW")
             
-            # 총자산 합산을 위해 원화로 변환
             total_unrealized_profit_krw += (prof * ex_rate)
             total_asset_value_krw += (p * r['수량'] * ex_rate)
             
@@ -597,6 +640,11 @@ with tab2:
         dis_df['현재가'] = prices; dis_df['수익금'] = profs; dis_df['수익률(%)'] = rates
         dis_df['🛡️손절/익절가'] = trailing_stops 
         dis_df['평가금액'] = np.array(prices) * dis_df['수량'].astype(float)
+        
+        # 💡 [신규] 섹터 분류 및 원화 환산 평가금액 데이터 추가
+        sector_map = get_sector_map()
+        dis_df['섹터'] = [ '해외주식' if c == 'USD' else sector_map.get(n, '기타분류') for c, n in zip(currencies, dis_df['종목명']) ]
+        dis_df['원화평가금액'] = [ p * (usd_krw if c == 'USD' else 1.0) for p, c in zip(dis_df['평가금액'], currencies) ]
 
     st.markdown(f"""
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
@@ -606,6 +654,13 @@ with tab2:
         <div class="kpi-card" style="padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};"><div class="kpi-title">📈 평가 손익</div><div class="kpi-value-main" style="font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};">{int(total_unrealized_profit_krw):,}원</div></div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # 💡 [신규] 자산 배분(섹터/테마) 현황 파이 차트 렌더링
+    if not dis_df.empty:
+        sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
+        fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
+        fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_pie, use_container_width=True)
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
@@ -627,17 +682,30 @@ with tab2:
                 if submit2:
                     idx = next((i for i, v in enumerate(p_data['stocks']) if v["종목명"] == s_n), None)
                     if idx is not None and s_q <= p_data['stocks'][idx]['수량']:
-                        # 💡 [업데이트] 수익 실현 시 달러 수익을 원화로 환산하여 저장
                         _, tck = get_stock_info(s_n)
                         is_us = not str(tck).isdigit() if tck else False
                         ex_rate = usd_krw if is_us else 1.0
                         
                         prof_in_currency = (s_p - p_data['stocks'][idx]['매수단가']) * s_q
-                        p_data['realized_profit'] += (prof_in_currency * ex_rate)
+                        prof_in_krw = prof_in_currency * ex_rate
                         
+                        p_data['realized_profit'] += prof_in_krw
                         p_data['stocks'][idx]['수량'] -= s_q
                         if p_data['stocks'][idx]['수량'] <= 0: p_data['stocks'].pop(idx)
-                        save_portfolio(p_data); st.rerun()
+                        
+                        # 💡 가계부에 매도 기록 추가
+                        new_record = {
+                            'id': str(time.time()),
+                            'date': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                            'ticker': s_n,
+                            'profit_krw': prof_in_krw,
+                            'memo': f"{s_q}주 매도"
+                        }
+                        ledger_data['history'].append(new_record)
+                        
+                        save_portfolio(p_data)
+                        save_ledger(ledger_data)
+                        st.rerun()
     with del_tab:
         if not dis_df.empty:
             with st.form("del"):
@@ -650,8 +718,7 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
-        # 💡 [업데이트] 표에서 '원' 글자 제거 및 소수점 표시 허용
-        edt_df = st.data_editor(dis_df.drop(columns=['평가금액']), 
+        edt_df = st.data_editor(dis_df.drop(columns=['평가금액', '섹터', '원화평가금액']), 
             column_config={
                 "통화": st.column_config.TextColumn("통화", disabled=True),
                 "현재가": st.column_config.NumberColumn("현재가", format="%.2f", disabled=True), 
@@ -664,9 +731,62 @@ with tab2:
         if str(pd.DataFrame(p_data['stocks'])[['매수단가', '수량']].fillna(0).values.tolist()) != str(edt_df[['매수단가', '수량']].fillna(0).values.tolist()):
             p_data['stocks'] = edt_df[['종목명', '매수단가', '수량']].to_dict('records')
             save_portfolio(p_data); st.rerun()
+            
+        # 💡 [신규] AI VVIP 펀드매니저 종합 리밸런싱 리포트
+        st.markdown("<h3 style='color: #38bdf8; margin-top:40px;'>🤖 AI VVIP 펀드매니저 리밸런싱 리포트</h3>", unsafe_allow_html=True)
+        if st.button("🚀 포트폴리오 종합 진단 및 비중 조절 조언 받기", type="primary", use_container_width=True):
+            if not gemini_api_key: st.error("위쪽 시스템 설정에서 API Key를 입력하세요!"); st.stop()
+            with st.spinner("AI 펀드매니저가 고객님의 자산 비중과 글로벌 시장 동향을 매칭하여 분석 중입니다..."):
+                port_summary = dis_df[['종목명', '섹터', '수익률(%)', '원화평가금액']].to_dict('records')
+                news_summary = get_recent_news("주식 시장 시황")
+                
+                prompt = f"""
+                당신은 상위 1% VVIP를 전담하는 수석 AI 펀드매니저입니다.
+                고객의 투자 성향: {st.session_state.invest_style}
+                시장 주요 뉴스: {news_summary}
+                고객 포트폴리오 현황: {port_summary}
+                
+                이 데이터를 바탕으로 현재 포트폴리오의 건강 상태, 섹터 쏠림 현상 여부, 그리고 종목별 구체적인 리밸런싱(비중 축소/확대) 조언을 분석해주세요.
+                출력 형식(JSON): 
+                {{
+                    "portfolio_health": "포트폴리오 종합 평가 및 섹터 분산도 평가 (3문장 내외)",
+                    "rebalancing_strategy": "시장 상황에 따른 전체 비중 조절 전략 (2문장 내외)",
+                    "action_items": [
+                        {{"stock": "종목명", "action": "비중확대/유지/비중축소/전량매도", "reasoning": "액션에 대한 명확한 이유 (1문장)"}}
+                    ]
+                }}
+                """
+                try:
+                    res = get_ai_analysis(prompt, gemini_api_key)
+                    
+                    html_report = f"""
+                    <div style='background: #1e293b; padding: 25px; border-radius: 16px; border: 1px solid #334155; margin-top: 15px; animation: fadeIn 0.5s;'>
+                        <h4 style='color: #34d399; margin-top: 0; font-size: 1.2rem;'><i class='fas fa-stethoscope'></i> 포트폴리오 종합 진단</h4>
+                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;'>{res['portfolio_health']}</p>
+                        
+                        <h4 style='color: #fbbf24; font-size: 1.2rem;'><i class='fas fa-balance-scale'></i> 핵심 리밸런싱 전략</h4>
+                        <p style='color: #e2e8f0; line-height: 1.6; margin-bottom: 25px;'>{res['rebalancing_strategy']}</p>
+                        
+                        <h4 style='color: #38bdf8; font-size: 1.2rem; margin-bottom: 15px;'><i class='fas fa-crosshairs'></i> 종목별 액션 플랜</h4>
+                        <div style='display: flex; flex-direction: column; gap: 12px;'>
+                    """
+                    for item in res['action_items']:
+                        action_color = "#34d399" if "확대" in item['action'] else "#f87171" if "축소" in item['action'] or "매도" in item['action'] else "#94a3b8"
+                        html_report += f"""
+                            <div style='background: #0f172a; padding: 15px; border-radius: 12px; border-left: 4px solid {action_color};'>
+                                <span style='font-weight: 800; color: #f8fafc; font-size: 1.1rem;'>{item['stock']}</span> 
+                                <span style='background: {action_color}20; color: {action_color}; padding: 4px 10px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; margin-left: 10px;'>{item['action']}</span>
+                                <p style='color: #cbd5e1; margin: 8px 0 0 0; font-size: 0.95rem; line-height: 1.5;'>{item['reasoning']}</p>
+                            </div>
+                        """
+                    html_report += "</div></div>"
+                    st.markdown(html_report, unsafe_allow_html=True)
+                    st.success("✅ VVIP AI 펀드매니저 리포트 생성이 완료되었습니다.")
+                except Exception as e:
+                    st.error(f"AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
 # -----------------------------------------------------
-# [탭 3] VIP 스크리너 (수급 폭발 감지 & 유동성 필터 신규 적용)
+# [탭 3] VIP 스크리너 
 # -----------------------------------------------------
 with tab3:
     st.markdown("<h3 style='color: #f8fafc;'>📡 매수 급소 AI 스크리너</h3>", unsafe_allow_html=True)
@@ -818,11 +938,9 @@ if is_admin:
             if user_list:
                 df_users = pd.DataFrame(user_list)
                 
-                # 1. 회원 등급 변경 구역
                 st.markdown("<h4 style='color: #38bdf8; margin-top: 20px;'>🔄 회원 등급 관리</h4>", unsafe_allow_html=True)
                 st.write("표에서 '등급' 열을 클릭하여 Free / VIP / Admin 중 하나로 변경한 뒤, 아래 저장 버튼을 누르세요.")
                 
-                # 아이디와 가입일은 잠그고(disabled=True), 등급만 선택(Selectbox)할 수 있도록 설정
                 edited_df = st.data_editor(
                     df_users, 
                     column_config={
@@ -834,7 +952,6 @@ if is_admin:
                     use_container_width=True
                 )
                 
-                # 변경된 등급 DB에 저장
                 if st.button("💾 변경된 등급 저장", type="primary"):
                     with st.spinner("권한을 업데이트하고 있습니다..."):
                         update_count = 0
@@ -854,7 +971,6 @@ if is_admin:
                 
                 st.markdown("---")
                 
-                # 2. 회원 삭제 구역
                 st.markdown("<h4 style='color: #f87171;'>🗑️ 회원 영구 삭제</h4>", unsafe_allow_html=True)
                 with st.form("delete_user_form"):
                     col_d1, col_d2 = st.columns([3, 1])
@@ -868,7 +984,6 @@ if is_admin:
                         if del_user_id.lower() == 'admin':
                             st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 없습니다!")
                         else:
-                            # DB에서 해당 유저 문서(Document) 삭제
                             db.collection('users').document(del_user_id).delete()
                             st.success(f"✅ '{del_user_id}' 계정이 영구 삭제되었습니다.")
                             time.sleep(1)
