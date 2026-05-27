@@ -141,7 +141,6 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                 try: db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
                 except Exception as e: st.warning(f"성향 저장 오류: {e}")
 
-        # 💡 [버그 수정] API 키 및 텔레그램 토큰 입력란 확실하게 노출
         gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
         if not gemini_api_key: 
             gemini_api_key = st.text_input("🤖 Gemini API Key (필수)", type="password")
@@ -380,9 +379,12 @@ def calculate_cloud_indicators(df):
         df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
         df['BB_Mid'] = df['Close'].rolling(window=20).mean()
         df['BB_Std'] = df['Close'].rolling(window=20).std()
+        
+        # 💡 [핵심 최적화 적용] 볼린저밴드 Width 계산 시 0으로 나누기(ZeroDivisionError) 방어
+        epsilon = 1e-9
         df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
         df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
-        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
+        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['BB_Mid'] + epsilon)
         
         delta = df['Close'].diff()
         df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
@@ -953,7 +955,10 @@ with tab3:
                             a = float(ind['ATR'])
                             tar_p = entry1 + (a*4)
                             stop_p = entry1 - (a*2)
-                            rr_2 = (tar_p - entry2) / (entry2 - stop_p) if (entry2 - stop_p) > 0 else 0.0
+                            
+                            # 💡 [핵심 최적화 적용] 손익비(RR) 계산 시 0으로 나누기 오류 완전 방어
+                            denom = entry2 - stop_p
+                            rr_2 = (tar_p - entry2) / denom if denom > 1e-5 else 0.0
                             
                             tags = []
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
@@ -1018,7 +1023,6 @@ with tab3:
                 
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
-                # 💡 [버그 완벽 수정] 토큰이 없으면 조용히 넘어가지 않고 명확하게 경고 띄우기
                 if send_to_telegram:
                     if tele_token and tele_chat_id:
                         chunks = []
