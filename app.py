@@ -427,7 +427,6 @@ def calculate_cloud_indicators(df):
         df['BB_Mid'] = df['Close'].rolling(window=20).mean()
         df['BB_Std'] = df['Close'].rolling(window=20).std()
         
-        # 💡 [핵심 최적화 적용] 볼린저밴드 Width 계산 시 0으로 나누기(ZeroDivisionError) 방어
         epsilon = 1e-9
         df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
         df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
@@ -801,7 +800,7 @@ with tab2:
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>💵 보유 현금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(remaining_cash):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>📦 투자 원금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(total_invested_krw):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px; border-color: #38bdf8;'><div class='kpi-title'>💎 총 자산</div><div class='kpi-value-main' style='font-size: 1.4rem; color: #38bdf8;'>{int(total_asset_value_krw):,}원</div></div>"
-        f"<div class='kpi-card' style='padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
         "</div>"
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
@@ -872,7 +871,26 @@ with tab2:
 
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
-        edt_df = st.data_editor(dis_df.drop(columns=['평가금액', '섹터', '원화평가금액']), 
+        
+        # 💡 [스타일링 추가] 수익률에 따른 글자색 변경 (빨간색/파란색)
+        view_df = dis_df.drop(columns=['평가금액', '섹터', '원화평가금액'])
+        
+        def highlight_profit(val):
+            try:
+                v = float(val)
+                if v > 0: return 'color: #f87171; font-weight: bold;' # 🔴 수익 (빨간색)
+                elif v < 0: return 'color: #60a5fa; font-weight: bold;' # 🔵 손실 (파란색)
+                else: return ''
+            except: return ''
+            
+        try:
+            # Pandas 2.1.0 이상 버전 대응
+            styled_df = view_df.style.map(highlight_profit, subset=['수익금', '수익률(%)'])
+        except AttributeError:
+            # 구버전 Pandas 대응
+            styled_df = view_df.style.applymap(highlight_profit, subset=['수익금', '수익률(%)'])
+
+        edt_df = st.data_editor(styled_df, 
             column_config={
                 "통화": st.column_config.TextColumn("통화", disabled=True),
                 "현재가": st.column_config.NumberColumn("현재가", format="%.2f", disabled=True), 
