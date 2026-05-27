@@ -13,6 +13,10 @@ import numpy as np
 import time
 import re
 import textwrap
+import logging
+
+# 💡 [신규] 시스템 로그 기록기 설정 (에러를 조용히 넘기지 않고 터미널에 상세 기록)
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
 
 # 💎 강제 딥 다크 테마 세팅 엔진
 theme_config = """[theme]
@@ -42,6 +46,7 @@ try:
 except ImportError as e:
     FIREBASE_AVAILABLE = False
     FIREBASE_IMPORT_ERROR = str(e)
+    logging.error(f"Firebase 라이브러리 임포트 실패: {e}")
 
 st.set_page_config(page_title="클라우드 퀀트 PRO", layout="wide", page_icon="☁️", initial_sidebar_state="collapsed")
 
@@ -73,16 +78,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def init_db():
-    if not FIREBASE_AVAILABLE: return None, f"🚨 라이브러리 누락: {FIREBASE_IMPORT_ERROR}"
+    if not FIREBASE_AVAILABLE: 
+        return None, f"🚨 라이브러리 누락: {FIREBASE_IMPORT_ERROR}"
     try:
         raw_s = str(st.secrets.get("FIREBASE_JSON", st.secrets.get("firebase", "")))
-        if not raw_s: return None, "❌ 설정창(Secrets) 비어있음."
+        if not raw_s: 
+            return None, "❌ 설정창(Secrets) 비어있음."
         try:
             creds_dict = json.loads(raw_s, strict=False)
             if "private_key" in creds_dict: creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
             creds = service_account.Credentials.from_service_account_info(creds_dict)
             return firestore.Client(credentials=creds, project=creds_dict.get("project_id")), "✅ 연결 성공"
-        except:
+        except Exception as e:
+            logging.warning(f"JSON 파싱 실패, 정규식 파싱 시도: {e}")
             pm = re.search(r'project_id[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9-]+)', raw_s)
             em = re.search(r'client_email[\'"]?\s*[:=]\s*[\'"]?([a-zA-Z0-9@.-]+)', raw_s)
             pk_raw = raw_s[raw_s.find("-----BEGIN PRIVATE KEY-----") : raw_s.find("-----END PRIVATE KEY-----") + 25]
@@ -90,7 +98,9 @@ def init_db():
             private_key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(pk_body, 64)) + "\n-----END PRIVATE KEY-----\n"
             creds = service_account.Credentials.from_service_account_info({"type": "service_account", "project_id": pm.group(1), "private_key": private_key, "client_email": em.group(1), "token_uri": "https://oauth2.googleapis.com/token"})
             return firestore.Client(credentials=creds, project=pm.group(1)), "✅ 연결 성공"
-    except Exception as e: return None, f"❌ 접속 거부: {e}"
+    except Exception as e: 
+        logging.error(f"DB 접속 거부: {e}")
+        return None, f"❌ 접속 거부: {e}"
 
 if 'db_client' not in st.session_state: st.session_state.db_client, st.session_state.db_msg = init_db()
 db = st.session_state.db_client
@@ -124,7 +134,9 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                                 st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, target_tier
                                 st.session_state.invest_style = "⚖️ 보통 (균형 추구)"
                             st.rerun()
-                        except: st.error("DB 오류")
+                        except Exception as e: 
+                            logging.error(f"DB 로그인 오류: {e}")
+                            st.error("DB 오류")
                     else:
                         st.session_state.logged_in, st.session_state.user_id, st.session_state.user_tier = True, login_id, 'Admin'; st.rerun()
         else:
@@ -139,7 +151,9 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
             st.session_state.invest_style = new_style
             if st.session_state.logged_in and db:
                 try: db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
-                except Exception as e: st.warning(f"성향 저장 오류: {e}")
+                except Exception as e: 
+                    logging.warning(f"성향 저장 오류: {e}")
+                    st.warning(f"성향 저장 오류: {e}")
 
         gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
         if not gemini_api_key: 
@@ -172,18 +186,26 @@ def load_portfolio():
         try:
             doc = db.collection('portfolios').document(st.session_state.user_id).get()
             if doc.exists: return doc.to_dict()
-        except: pass
+        except Exception as e: 
+            logging.warning(f"포트폴리오 로드 실패: {e}")
+            pass
     file_name = f'portfolio_data_{st.session_state.user_id}.json'
     if os.path.exists(file_name):
         try:
             with open(file_name, 'r') as f: return json.load(f)
-        except: pass
+        except Exception as e: 
+            logging.warning(f"로컬 포트폴리오 로드 실패: {e}")
+            pass
     return default_data
 
 def save_portfolio(data):
     if db:
-        try: db.collection('portfolios').document(st.session_state.user_id).set(data); return
-        except: pass
+        try: 
+            db.collection('portfolios').document(st.session_state.user_id).set(data)
+            return
+        except Exception as e: 
+            logging.error(f"포트폴리오 DB 저장 실패: {e}")
+            pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
 def load_ledger():
@@ -191,13 +213,18 @@ def load_ledger():
         try:
             doc = db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).get()
             return doc.to_dict() if doc.exists else {'history': []}
-        except: return {'history': []}
+        except Exception as e: 
+            logging.warning(f"가계부 로드 실패: {e}")
+            return {'history': []}
     return {'history': []}
 
 def save_ledger(data):
     if db:
-        try: db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
-        except: pass
+        try: 
+            db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
+        except Exception as e: 
+            logging.error(f"가계부 저장 실패: {e}")
+            pass
 
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
@@ -209,9 +236,14 @@ def load_krx_data():
     try:
         df = fdr.StockListing('KRX-DESC')
         if not df.empty: return df
-    except: pass
-    try: return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
-    except: raise ValueError("데이터 로드 실패")
+    except Exception as e: 
+        logging.warning(f"KRX-DESC 로드 실패, 대안 시도: {e}")
+        pass
+    try: 
+        return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
+    except Exception as e: 
+        logging.error(f"KRX 데이터 전체 로드 실패: {e}")
+        raise ValueError("데이터 로드 실패")
 
 def get_stock_info(query):
     query = str(query).strip().upper()
@@ -230,7 +262,9 @@ def get_stock_info(query):
                     return item[0], str(item[1])
             for item in items:
                 if str(item[1]).isdigit() and len(str(item[1])) == 6: return item[0], str(item[1])
-    except: pass
+    except Exception as e: 
+        logging.warning(f"Naver AutoComplete 검색 실패 ({query}): {e}")
+        pass
         
     try:
         df_krx = load_krx_data()
@@ -248,7 +282,9 @@ def get_stock_info(query):
             if not match_partial.empty: 
                 best = match_partial.assign(NameLen=match_partial['Name'].str.len()).sort_values('NameLen').iloc[0]
                 return best['Name'], str(best['Code']).replace('.0', '').zfill(6)
-    except: pass
+    except Exception as e: 
+        logging.warning(f"KRX DataFrame 검색 실패 ({query}): {e}")
+        pass
     
     if re.match(r'^[A-Z]+$', query):
         return query, query
@@ -293,7 +329,8 @@ def get_sector_map():
                     elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객']): sector_dict[n] = '물류/운송'
                     elif any(k in s for k in ['전기', '가스', '수도', '에너지']): sector_dict[n] = '유틸리티/에너지'
                     else: sector_dict[n] = '제조/기타산업'
-    except: pass
+    except Exception as e: 
+        logging.warning(f"Sector map fetch error: {e}")
     return sector_dict
 
 @st.cache_data(ttl=86400)
@@ -305,7 +342,9 @@ def get_top_200_stocks():
         df = df[df[col].str.match(r'^\d{6}$')]
         df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
-    except: return {"삼성전자":"005930", "SK하이닉스":"000660"}
+    except Exception as e: 
+        logging.error(f"KOSPI Top 200 로드 실패: {e}")
+        return {"삼성전자":"005930", "SK하이닉스":"000660"}
 
 @st.cache_data(ttl=86400)
 def get_kosdaq_top_200_stocks():
@@ -316,22 +355,29 @@ def get_kosdaq_top_200_stocks():
         df = df[df[col].str.match(r'^\d{6}$')]
         df = df[~df['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
         return dict(zip(df.head(200)['Name'], df.head(200)[col]))
-    except: return {"에코프로비엠":"247540", "알테오젠":"196170", "HLB":"028300"}
+    except Exception as e: 
+        logging.error(f"KOSDAQ Top 200 로드 실패: {e}")
+        return {"에코프로비엠":"247540", "알테오젠":"196170", "HLB":"028300"}
 
 @st.cache_data(ttl=86400)
 def get_us_top_stocks():
     try:
         df = fdr.StockListing('S&P500')
         return dict(zip(df.head(100)['Name'], df.head(100)['Symbol']))
-    except: return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA"}
+    except Exception as e: 
+        logging.error(f"S&P500 로드 실패: {e}")
+        return {"Apple":"AAPL", "Tesla":"TSLA", "NVIDIA":"NVDA"}
 
 @st.cache_data(ttl=3600)
 def get_recent_news(keyword):
     try:
         res = requests.get(f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko", timeout=5)
+        res.raise_for_status()
         soup = BeautifulSoup(res.content, 'xml')
         return [item.title.text for item in soup.find_all('item')[:5] if item.title]
-    except: return ["뉴스 수집 오류"]
+    except Exception as e: 
+        logging.warning(f"뉴스 수집 오류 ({keyword}): {e}")
+        return ["뉴스 수집 오류"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_analysis(prompt, api_key):
@@ -363,10 +409,11 @@ def get_ai_analysis(prompt, api_key):
                 
             return json.loads(text)
         except Exception as e:
+            logging.warning(f"AI 분석 API 시도 {attempt+1}회 실패: {e}")
             if attempt < 4: 
                 time.sleep(2)
                 continue
-            raise Exception(f"API 응답 분석 실패 ({str(e)})")
+            raise Exception(f"API 응답 분석 최종 실패 ({str(e)})")
 
 def calculate_cloud_indicators(df):
     if df is None or df.empty: return None, {}
@@ -408,11 +455,15 @@ def calculate_cloud_indicators(df):
                 prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
                 today_vol = df['Volume'].iloc[-1]
                 is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
-            except: pass
+            except Exception as e:
+                logging.debug(f"수급 폭발 계산 오류: {e}")
+                pass
             
         latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
         try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
-        except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
+        except Exception as e: 
+            logging.debug(f"월봉 변환 오류, 200일선 대체: {e}")
+            current_monthly_ema10 = float(df['EMA200'].iloc[-1])
         
         indicators = {
             "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), 
@@ -427,7 +478,7 @@ def calculate_cloud_indicators(df):
         }
         return df, indicators
     except Exception as e:
-        print(f"Indicator calculation error: {e}")
+        logging.error(f"Indicator calculation error: {e}", exc_info=True)
         return None, {}
 
 def run_backtest_with_markers(df):
@@ -467,11 +518,11 @@ def send_telegram_message(token, chat_id, text):
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         res = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
         if res.status_code != 200:
-            print(f"Telegram Server Error: {res.text}")
+            logging.error(f"Telegram Server Error: {res.text}")
             return False
         return True
     except Exception as e: 
-        print(f"Telegram Exception: {e}")
+        logging.error(f"Telegram Exception: {e}")
         return False
 
 @st.cache_data(ttl=3600)
@@ -479,14 +530,18 @@ def get_current_price(ticker):
     try:
         df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
         return float(df['Close'].iloc[-1]) if not df.empty else 0.0
-    except: return 0.0
+    except Exception as e: 
+        logging.warning(f"현재가 로드 오류 ({ticker}): {e}")
+        return 0.0
 
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
         df = fdr.DataReader('USD/KRW', (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
         return float(df['Close'].iloc[-1])
-    except: return 1350.0
+    except Exception as e: 
+        logging.warning(f"환율 로드 오류: {e}")
+        return 1350.0
 
 col_s1, col_s2 = st.columns([1, 1])
 with col_s1: fast_search = st.selectbox("🎯 빠른 종목 검색", ["직접 입력", "삼성전자", "SK하이닉스", "카카오", "현대차", "영풍", "애플(AAPL)"])
@@ -515,7 +570,8 @@ with tab1:
             raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, tech_ind = calculate_cloud_indicators(raw_df)
             stats, buy_m, sell_m = run_backtest_with_markers(df) 
-        except: 
+        except Exception as e: 
+            logging.error(f"차트 분석 중 오류 발생: {e}", exc_info=True)
             df = None; tech_ind = {}; stats = {'total_trades': 0, 'win_rate': 0, 'total_return': 0}
             buy_m = {'x': [], 'y': []}; sell_m = {'x': [], 'y': []}
         
@@ -632,7 +688,9 @@ with tab1:
                             "</div>"
                         )
                         st.markdown(html_sentiment, unsafe_allow_html=True)
-                    except Exception as e: st.error(f"분석 실패: {e}")
+                    except Exception as e: 
+                        logging.error(f"뉴스 감성 스코어 분석 실패: {e}")
+                        st.error(f"분석 실패: {e}")
 
         st.markdown("<h3 style='color: #38bdf8; margin-top:30px;'>🤖 Harness 4-Agent 분석 엔진</h3>", unsafe_allow_html=True)
         if st.button("🚀 4-Agent 회 소집 (분석 실행)", type="primary", use_container_width=True):
@@ -649,7 +707,9 @@ with tab1:
                         "</div>"
                     )
                     st.markdown(html_chat, unsafe_allow_html=True)
-                except Exception as e: st.error(f"분석 오류: {e}")
+                except Exception as e: 
+                    logging.error(f"4-Agent 분석 오류: {e}")
+                    st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
 # [탭 2] 포트폴리오 관리 & 가계부
@@ -718,7 +778,8 @@ with tab2:
                 tr = pd.concat([temp_df['High']-temp_df['Low'], (temp_df['High']-temp_df['Close'].shift(1)).abs(), (temp_df['Low']-temp_df['Close'].shift(1)).abs()], axis=1).max(axis=1)
                 atr = tr.rolling(14).mean().iloc[-1]
                 t_stop = p - (atr * 2.5) if rate > 0 else r['매수단가'] - (atr * 2)
-            except:
+            except Exception as e:
+                logging.debug(f"트레일링 스탑 계산 오류 ({r['종목명']}): {e}")
                 t_stop = p * 0.95
                 
             prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop); currencies.append("USD" if is_us else "KRW")
@@ -893,6 +954,7 @@ with tab2:
                     st.markdown(html_report, unsafe_allow_html=True)
                     st.success("✅ VVIP AI 펀드매니저 리포트 생성이 완료되었습니다.")
                 except Exception as e:
+                    logging.error(f"VVIP 리포트 생성 오류: {e}")
                     st.error(f"🚨 AI 분석 중 오류가 발생했습니다: {str(e)}")
                     st.warning("💡 포트폴리오에 보유 종목이 하나밖에 없거나 구글 AI 서버가 일시적인 혼잡 상태일 수 있습니다. 잠시 후 버튼을 다시 눌러주세요.")
 
@@ -923,7 +985,8 @@ with tab3:
                 try:
                     krx_df = fdr.StockListing('KRX')
                     marcap_dict = dict(zip(krx_df['Code'], krx_df['Marcap']))
-                except: pass
+                except Exception as e: 
+                    logging.warning(f"스크리너 KRX 시총 로드 오류: {e}")
             
             res = []; bar = st.progress(0); txt = st.empty()
             total_stocks = len(sl) if sl else 1
@@ -982,6 +1045,7 @@ with tab3:
                                 "거래대금(억)": int(recent_amount / 100000000) if not pd.isna(recent_amount) else 0
                             })
                 except Exception as e:
+                    logging.info(f"스크리닝 종목 건너뜀 ({n}): {e}")
                     pass
                 
                 safe_progress = min((i + 1) / total_stocks, 1.0)
