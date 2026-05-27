@@ -141,16 +141,29 @@ with st.expander("👤 계정 및 봇(Bot) 설정", expanded=not st.session_stat
                 try: db.collection('users').document(st.session_state.user_id).update({'invest_style': new_style})
                 except Exception as e: st.warning(f"성향 저장 오류: {e}")
 
+        # 💡 [버그 수정] API 키 및 텔레그램 토큰 입력란 확실하게 노출
         gemini_api_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
-        if not gemini_api_key: gemini_api_key = st.text_input("Gemini API Key (필수)", type="password")
+        if not gemini_api_key: 
+            gemini_api_key = st.text_input("🤖 Gemini API Key (필수)", type="password")
+            
         tele_token = str(st.secrets.get("TELEGRAM_TOKEN", "")).strip()
+        if not tele_token:
+            tele_token = st.text_input("📱 텔레그램 Bot Token", type="password", help="BotFather를 통해 발급받은 토큰을 입력하세요.")
+            
         tele_chat_id = ""
-        
         if st.session_state.logged_in and db:
             user_ref = db.collection('users').document(st.session_state.user_id)
-            tele_chat_id = user_ref.get().to_dict().get('telegram_chat_id', "") if user_ref.get().exists else ""
-            input_chat_id = st.text_input("📱 텔레그램 Chat ID", value=tele_chat_id)
-            if input_chat_id != tele_chat_id and st.button("알림 ID 저장"): user_ref.update({'telegram_chat_id': input_chat_id}); st.rerun()
+            user_data = user_ref.get().to_dict() if user_ref.get().exists else {}
+            tele_chat_id = user_data.get('telegram_chat_id', "")
+            
+            col_t1, col_t2 = st.columns([3, 1])
+            with col_t1:
+                input_chat_id = st.text_input("📱 텔레그램 Chat ID", value=tele_chat_id, help="getidsbot 등을 통해 얻은 숫자형 ID를 입력하세요.")
+            with col_t2:
+                st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                if input_chat_id != tele_chat_id and st.button("알림 ID 저장", use_container_width=True): 
+                    user_ref.update({'telegram_chat_id': input_chat_id})
+                    st.rerun()
 
 st.markdown("---")
 
@@ -447,14 +460,16 @@ def run_backtest_with_markers(df):
 
 def format_price(price, ticker): return f"{int(price):,}원" if str(ticker).isdigit() else f"${price:,.2f}"
 
-# 💡 [핵심 버그 수정] 텔레그램 API 주소에 섞인 마크다운 링크 문법 제거 (오류 방지)
 def send_telegram_message(token, chat_id, text):
     try: 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         res = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
-        return res.status_code == 200
+        if res.status_code != 200:
+            print(f"Telegram Server Error: {res.text}")
+            return False
+        return True
     except Exception as e: 
-        print(f"Telegram Error: {e}")
+        print(f"Telegram Exception: {e}")
         return False
 
 @st.cache_data(ttl=3600)
@@ -1003,39 +1018,42 @@ with tab3:
                 
                 st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
                 
-                if send_to_telegram and tele_token and tele_chat_id:
-                    chunks = []
-                    msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
-                    for r in res:
-                        cp = f"${r['현재가']:,.2f}" if is_us else f"{int(r['현재가']):,}원"
-                        ep = f"${r['1차타점(대기)']:,.2f}" if is_us else f"{int(r['1차타점(대기)']):,}원"
-                        tp = f"${r['목표가']:,.2f}" if is_us else f"{int(r['목표가']):,}원"
-                        sp = f"${r['손절가']:,.2f}" if is_us else f"{int(r['손절가']):,}원"
+                # 💡 [버그 완벽 수정] 토큰이 없으면 조용히 넘어가지 않고 명확하게 경고 띄우기
+                if send_to_telegram:
+                    if tele_token and tele_chat_id:
+                        chunks = []
+                        msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
+                        for r in res:
+                            cp = f"${r['현재가']:,.2f}" if is_us else f"{int(r['현재가']):,}원"
+                            ep = f"${r['1차타점(대기)']:,.2f}" if is_us else f"{int(r['1차타점(대기)']):,}원"
+                            tp = f"${r['목표가']:,.2f}" if is_us else f"{int(r['목표가']):,}원"
+                            sp = f"${r['손절가']:,.2f}" if is_us else f"{int(r['손절가']):,}원"
+                            
+                            info = f"<b>{r['종목명']}</b> ({r['시그널']})\n"
+                            info += f" └ ✨ <b>포착원인:</b> {r['포착원인']}\n"
+                            info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>BB:</b> {r['볼린저상태']}\n"
+                            info += f" └ 🎯 <b>매수대기:</b> {ep} (현재 {cp})\n"
+                            info += f" └ 🎯 <b>목표:</b> {tp} / 🛡️ <b>손절:</b> {sp}\n\n"
+                            
+                            if len(msg) + len(info) > 3800: 
+                                chunks.append(msg)
+                                msg = info
+                            else: 
+                                msg += info
+                        chunks.append(msg)
                         
-                        info = f"<b>{r['종목명']}</b> ({r['시그널']})\n"
-                        info += f" └ ✨ <b>포착원인:</b> {r['포착원인']}\n"
-                        info += f" └ 📊 <b>RSI:</b> {r['RSI']:.1f} | <b>BB:</b> {r['볼린저상태']}\n"
-                        info += f" └ 🎯 <b>매수대기:</b> {ep} (현재 {cp})\n"
-                        info += f" └ 🎯 <b>목표:</b> {tp} / 🛡️ <b>손절:</b> {sp}\n\n"
-                        
-                        if len(msg) + len(info) > 3800: 
-                            chunks.append(msg)
-                            msg = info
-                        else: 
-                            msg += info
-                    chunks.append(msg)
-                    
-                    # 💡 [버그 완벽 수정] 텔레그램 전송 실패 시 에러 알림 기능 추가
-                    telegram_success = True
-                    for c in chunks: 
-                        if not send_telegram_message(tele_token, tele_chat_id, c):
-                            telegram_success = False
-                        time.sleep(0.3)
-                        
-                    if telegram_success:
-                        st.success("📱 텔레그램 전송 완료!")
+                        telegram_success = True
+                        for c in chunks: 
+                            if not send_telegram_message(tele_token, tele_chat_id, c):
+                                telegram_success = False
+                            time.sleep(0.3)
+                            
+                        if telegram_success:
+                            st.success("📱 텔레그램 전송 완료!")
+                        else:
+                            st.error("🚨 텔레그램 전송 실패! [계정 관리] 탭에서 Bot 토큰과 Chat ID가 올바른지 확인해 주세요.")
                     else:
-                        st.error("🚨 텔레그램 전송 실패! [시스템 설정]에서 텔레그램 Bot 토큰과 Chat ID가 정확한지 확인해주세요.")
+                        st.warning("⚠️ 텔레그램 전송 생략: 봇 토큰(Token) 또는 챗 아이디(Chat ID)가 설정되어 있지 않습니다. 좌측 상단 [계정 관리] 탭에서 입력해 주세요.")
             else: 
                 st.info("💡 스캔을 완료했으나, 현재 조건(월봉 10선 위 안전구간)을 통과한 종목이 없습니다.")
 
@@ -1096,7 +1114,7 @@ if is_admin:
                     
                     if del_submit:
                         if del_user_id.lower() == 'admin':
-                            st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 정없습니다!")
+                            st.error("🚨 최고 관리자(admin) 계정은 삭제할 수 없습니다!")
                         else:
                             db.collection('users').document(del_user_id).delete()
                             st.success(f"✅ '{del_user_id}' 계정이 영구 삭제되었습니다.")
