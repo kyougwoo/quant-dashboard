@@ -532,7 +532,6 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
-# 💡 [성능 최적화] 포트폴리오 데이터를 불러올 때 캐싱(1시간 유지)하여 속도를 10배 이상 향상
 @st.cache_data(ttl=3600)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
@@ -578,6 +577,11 @@ with tab1:
     if not ticker: st.error("❌ 종목을 찾을 수 없습니다."); st.stop()
 
     st.markdown(f"<h3 style='color: #f8fafc;'>📊 {actual_name} <span style='font-size: 0.6em; color: #64748b;'>{ticker}</span></h3>", unsafe_allow_html=True)
+    
+    # 💡 [신규 추가] AI 추세선 토글 버튼
+    st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+    show_trendline = st.toggle("📐 AI 자동 추세선 작도 켜기 (삼각수렴, 지지/저항선 가이드)", value=True)
+    
     with st.spinner("터미널 데이터 동기화 중..."):
         try: 
             raw_df = fdr.DataReader(ticker, (datetime.today() - timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
@@ -591,11 +595,9 @@ with tab1:
     if df is not None and not df.empty:
         display_df = df.tail(120) 
         
-        # 💡 [디자인 개편] 한국 HTS 스타일의 직관적인 상승(빨강)/하락(파랑) 색상 적용 및 투명도 조절
-        color_up = '#ff4b4b' # 강렬한 상승(Red)
-        color_down = '#3b82f6' # 강렬한 하락(Blue)
+        color_up = '#ff4b4b' 
+        color_down = '#3b82f6' 
         
-        # 💡 [기능 업그레이드] 4단 콤보 차트 생성 (주가, 거래량, MACD, RSI)
         fig = make_subplots(
             rows=4, cols=1, 
             shared_xaxes=True, 
@@ -607,24 +609,51 @@ with tab1:
         # ----------------------------------------
         # [1층] 메인 캔들 차트 및 이동평균선
         # ----------------------------------------
-        # 볼린저 밴드 배경 (부드러운 클라우드 형태)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), name='BB 상단', showlegend=False), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), fill='tonexty', fillcolor='rgba(148, 163, 184, 0.05)', name='BB 영역', showlegend=False), row=1, col=1)
         
-        # 메인 캔들 차트
         fig.add_trace(go.Candlestick(
             x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], 
             name="주가", increasing_line_color=color_up, decreasing_line_color=color_down, increasing_fillcolor=color_up, decreasing_fillcolor=color_down
         ), row=1, col=1)
         
-        # 네온(Neon) 스타일 이평선
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#fcd34d', width=1.5), name='5일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#c084fc', width=1.5), name='15일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#9ca3af', width=2, dash='dot'), name='200일선'), row=1, col=1)
         
-        # 기준선(매물대)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5, dash='dash'), name='최대 매물대'), row=1, col=1)
         
+        # 💡 [신규 로직] AI 자동 추세선 작도 (삼각수렴 가이드)
+        if show_trendline and len(display_df) > 20:
+            order = 5
+            highs = display_df['High'].values
+            lows = display_df['Low'].values
+            dates = display_df.index
+            
+            peaks = []
+            valleys = []
+            for i in range(order, len(display_df) - order):
+                if highs[i] == max(highs[i-order:i+order+1]):
+                    peaks.append((i, highs[i]))
+                if lows[i] == min(lows[i-order:i+order+1]):
+                    valleys.append((i, lows[i]))
+            
+            # 저항선 (최근 두 고점 연결)
+            if len(peaks) >= 2:
+                p1, p2 = peaks[-2], peaks[-1]
+                if p2[0] > p1[0]: # 에러 방지
+                    slope_h = (p2[1] - p1[1]) / (p2[0] - p1[0])
+                    end_y_h = p2[1] + slope_h * ((len(display_df)-1) - p2[0])
+                    fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추세)'), row=1, col=1)
+                
+            # 지지선 (최근 두 저점 연결)
+            if len(valleys) >= 2:
+                v1, v2 = valleys[-2], valleys[-1]
+                if v2[0] > v1[0]: # 에러 방지
+                    slope_l = (v2[1] - v1[1]) / (v2[0] - v1[0])
+                    end_y_l = v2[1] + slope_l * ((len(display_df)-1) - v2[0])
+                    fig.add_trace(go.Scatter(x=[dates[v1[0]], dates[-1]], y=[v1[1], end_y_l], mode='lines', line=dict(color='rgba(52, 211, 153, 0.8)', width=2, dash='dot'), name='지지선 (추세)'), row=1, col=1)
+
         # 매수/매도 시스템 마커
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
         b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
@@ -634,7 +663,6 @@ with tab1:
         if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', size=16, color='#34d399', line=dict(width=1.5, color='#0f172a')), name='시스템 매수'), row=1, col=1)
         if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=16, color='#f87171', line=dict(width=1.5, color='#0f172a')), name='시스템 매도'), row=1, col=1)
 
-        # 현재가 하이라이트 라인
         curr_p = float(df['Close'].iloc[-1])
         fig.add_hline(y=curr_p, line_dash="dot", line_color="#38bdf8", line_width=1.5, annotation_text=f"현재가: {format_price(curr_p, ticker)}", annotation_position="right", annotation_font=dict(color="white"), annotation_bgcolor="#0284c7", row=1, col=1)
 
@@ -645,14 +673,13 @@ with tab1:
         fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors_vol, opacity=0.6, name='거래량'), row=2, col=1)
 
         # ----------------------------------------
-        # [3층] MACD 차트 (골든크로스 하이라이트 포함)
+        # [3층] MACD 차트
         # ----------------------------------------
         colors_macd = ['#f87171' if val >= 0 else '#3b82f6' for val in display_df['MACD_Hist']]
         fig.add_trace(go.Bar(x=display_df.index, y=display_df['MACD_Hist'], marker_color=colors_macd, opacity=0.5, name='MACD Hist'), row=3, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['MACD'], mode='lines', line=dict(color='#38bdf8', width=1.5), name='MACD'), row=3, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['MACD_Signal'], mode='lines', line=dict(color='#fcd34d', width=1.5), name='Signal'), row=3, col=1)
         
-        # MACD 골든크로스 타점 시각화 (초록색 화살표)
         macd_cross_x = []
         macd_cross_y = []
         for i in range(1, len(display_df)):
@@ -663,12 +690,11 @@ with tab1:
             fig.add_trace(go.Scatter(x=macd_cross_x, y=macd_cross_y, mode='markers', marker=dict(symbol='triangle-up', size=12, color='#34d399', line=dict(width=1, color='#0f172a')), name='MACD 골든크로스'), row=3, col=1)
 
         # ----------------------------------------
-        # [4층] RSI 차트 (과매도 구간 하이라이트 포함)
+        # [4층] RSI 차트
         # ----------------------------------------
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['RSI'], mode='lines', line=dict(color='#c084fc', width=1.5), name='RSI'), row=4, col=1)
         fig.add_hline(y=70, line_dash="dash", line_color="#f87171", line_width=1, row=4, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="#38bdf8", line_width=1, row=4, col=1)
-        # 과매도(바닥) 구간 배경색 칠하기
         fig.add_hrect(y0=0, y1=30, fillcolor="rgba(56, 189, 248, 0.15)", layer="below", line_width=0, row=4, col=1)
 
         # ----------------------------------------
@@ -679,18 +705,15 @@ with tab1:
             paper_bgcolor="rgba(0,0,0,0)", 
             plot_bgcolor="rgba(0,0,0,0)", 
             xaxis_rangeslider_visible=False, 
-            height=900, # 4단 차트를 위해 높이 900으로 확장
+            height=900, 
             margin=dict(l=10, r=60, t=40, b=20), 
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
-        # 각 서브플롯의 그리드 라인 처리 및 서브타이틀 폰트 크기/색상
         fig.update_annotations(font_size=12, font_color="#94a3b8")
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
-        
-        # y축 범위 고정 (RSI)
         fig.update_yaxes(range=[0, 100], row=4, col=1)
 
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -804,7 +827,7 @@ with tab1:
                     st.error(f"분석 오류: {e}")
 
 # -----------------------------------------------------
-# [탭 2] 포트폴리오 관리 & 가계부 (가독성 & 속도 최적화 적용!)
+# [탭 2] 포트폴리오 관리 & 가계부
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
@@ -860,13 +883,11 @@ with tab2:
             is_us = not str(tck).isdigit() if tck else False
             ex_rate = usd_krw if is_us else 1.0
             
-            # 💡 [성능 최적화] 로딩 속도를 엄청나게 빠르게 만들어주는 캐싱 함수 활용
             p, atr = get_portfolio_stock_data(tck)
             
             prof = (p - r['매수단가']) * r['수량']
             rate = (prof / (r['매수단가']*r['수량']) * 100) if r['매수단가']>0 else 0
             
-            # 💡 [성능 최적화] 복잡한 DataFrame 연산 제거하고 미리 받아온 atr 활용
             t_stop = p - (atr * 2.5) if rate > 0 else r['매수단가'] - (atr * 2)
                 
             prices.append(p); profs.append(prof); rates.append(rate); trailing_stops.append(t_stop); currencies.append("USD" if is_us else "KRW")
@@ -960,21 +981,19 @@ with tab2:
     if not dis_df.empty:
         st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
         
-        # 💡 [가독성 향상] 수익률에 따른 글자색 변경 적용
         view_df = dis_df.drop(columns=['평가금액', '섹터', '원화평가금액'])
         
         def highlight_profit(val):
             try:
                 v = float(val)
-                if v > 0: return 'color: #f87171; font-weight: bold;' # 🔴 수익 (빨간색)
-                elif v < 0: return 'color: #60a5fa; font-weight: bold;' # 🔵 손실 (파란색)
+                if v > 0: return 'color: #f87171; font-weight: bold;'
+                elif v < 0: return 'color: #60a5fa; font-weight: bold;'
                 else: return ''
             except: return ''
             
         try: styled_df = view_df.style.map(highlight_profit, subset=['수익금', '수익률(%)'])
         except AttributeError: styled_df = view_df.style.applymap(highlight_profit, subset=['수익금', '수익률(%)'])
 
-        # 💡 [가독성 향상] 모든 숫자에 콤마(,)가 들어가도록 format="%d" 적용
         edt_df = st.data_editor(styled_df, 
             column_config={
                 "통화": st.column_config.TextColumn("통화", disabled=True),
@@ -1085,7 +1104,6 @@ with tab3:
             elif "코스닥" in mode: sl = get_kosdaq_top_200_stocks()
             else: sl = get_us_top_stocks()
             
-            # 💡 [기능 이식] 섹터 맵 불러오기
             sector_map = get_sector_map()
             marcap_dict = {}
             if "미국" not in mode:
@@ -1137,7 +1155,7 @@ with tab3:
                             
                             res.append({
                                 "종목명": str(n), 
-                                "섹터": sector_map.get(str(n), "기타분류"), # 💡 [기능 이식] 섹터 정보 추가
+                                "섹터": sector_map.get(str(n), "기타분류"),
                                 "시그널": "🔥 강력매수" if is_smart else "👍 분할매수",
                                 "포착원인": " + ".join(tags) if tags else "추세추종",
                                 "현재가": float(curr_p), 
@@ -1161,11 +1179,9 @@ with tab3:
                     
             txt.text("✅ 스캔 완료!")
             
-            # 💡 [핵심 최적화] 스캔 결과를 세션 스테이트(메모리)에 저장
             if res:
                 st.session_state.scan_results = res
                 
-                # 텔레그램 전송 (최초 스캔 완료 시에만 발송)
                 if send_to_telegram:
                     is_us = "미국" in mode
                     if tele_token and tele_chat_id:
@@ -1204,15 +1220,11 @@ with tab3:
                 st.session_state.scan_results = []
                 st.info("💡 스캔을 완료했으나, 현재 조건(월봉 10선 위 안전구간)을 통과한 종목이 없습니다.")
 
-    # 💡 [천재적인 UX 적용] 메모리에 저장된 결과를 기반으로 '즉시 필터링' 및 '테마 분석' 기능 구현
     if st.session_state.scan_results:
-        
-        # 💡 [신규 탑재] 주도 테마 & 수급 쏠림 감지 엔진 전광판
         df_all = pd.DataFrame(st.session_state.scan_results)
         if not df_all.empty and '섹터' in df_all.columns:
             total_count = len(df_all)
             
-            # 💡 [핵심 버그 수정] '기타분류', '제조/기타산업' 등 노이즈 데이터는 1등 후보에서 제외!
             meaningful_df = df_all[~df_all['섹터'].isin(['기타분류', '제조/기타산업'])]
             
             if not meaningful_df.empty:
@@ -1222,7 +1234,7 @@ with tab3:
                     top_count = sector_counts.iloc[0]
                     top_ratio = (top_count / total_count) * 100
                     
-                    if top_count >= 2: # 2개 이상일 때만 유의미한 쏠림으로 판단
+                    if top_count >= 2:
                         st.markdown(f"""
                         <div style='background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(15, 23, 42, 0.8)); border-left: 4px solid #ef4444; padding: 20px; border-radius: 12px; margin-top: 25px; margin-bottom: 25px; border-right: 1px solid #334155; border-top: 1px solid #334155; border-bottom: 1px solid #334155;'>
                             <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;'>
@@ -1237,17 +1249,14 @@ with tab3:
                     
         st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
         
-        # 필터 라디오 버튼
         filter_mode = st.radio("전략 선택", 
             ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
             horizontal=True, label_visibility="collapsed"
         )
         
-        # 데이터프레임 기본 처리
         num_cols = df_all.select_dtypes(include=[np.number]).columns
         df_all[num_cols] = df_all[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
         
-        # 즉각적인 Pandas 필터링 (서버 통신 없음!)
         if "S급 돌파" in filter_mode:
             df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
         elif "낙폭과대" in filter_mode:
@@ -1267,7 +1276,7 @@ with tab3:
             st.dataframe(df_view, 
                 column_config={
                     "종목명": st.column_config.TextColumn("종목명", width="medium"),
-                    "섹터": st.column_config.TextColumn("섹터/테마", width="medium"), # 💡 [표 컬럼 추가] 섹터 열 표시
+                    "섹터": st.column_config.TextColumn("섹터/테마", width="medium"), 
                     "시그널": st.column_config.TextColumn("AI 시그널"),
                     "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
                     "현재가": st.column_config.NumberColumn(f"현재가{col_suffix}", format=currency_format),
