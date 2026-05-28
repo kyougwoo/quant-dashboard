@@ -751,6 +751,47 @@ with tab1:
         )
         st.markdown(html_kpi, unsafe_allow_html=True)
 
+        # 💡 [신규 추가] 3분할 피라미드 매수 시나리오 토글
+        st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+        show_pyramid = st.toggle("📊 3분할 피라미드 매수 설계도 보기 (2:3:5 법칙)", value=False)
+        
+        if show_pyramid:
+            # 3차 타점 및 최종 손절가 계산 (ATR 활용)
+            entry3 = entry2 - float(tech_ind['ATR'])
+            final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
+            
+            # 예상 평균 단가 계산 (가중 평균)
+            avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
+            
+            html_pyramid = f"""
+            <div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>
+                <h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>
+                <div style='display: flex; flex-direction: column; gap: 10px; font-family: monospace; font-size: 1rem; color: #e2e8f0;'>
+                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
+                        <span>1차 매수 (비중 20%)</span>
+                        <span style='color: #f8fafc; font-weight: bold;'>{format_price(entry1, ticker)}</span>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
+                        <span>2차 매수 (비중 30%)</span>
+                        <span style='color: #f8fafc; font-weight: bold;'>{format_price(entry2, ticker)}</span>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
+                        <span>3차 매수 (비중 50%)</span>
+                        <span style='color: #fcd34d; font-weight: bold;'>{format_price(entry3, ticker)}</span>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; margin-top: 10px; padding: 10px; background: rgba(56, 189, 248, 0.1); border-radius: 8px;'>
+                        <span>✨ 예상 평균 단가</span>
+                        <span style='color: #38bdf8; font-weight: bold;'>{format_price(avg_price, ticker)}</span>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; margin-top: 5px; padding: 10px; background: rgba(248, 113, 113, 0.1); border-radius: 8px;'>
+                        <span>🚨 최종 손절선 (3차 이탈 시)</span>
+                        <span style='color: #f87171; font-weight: bold;'>{format_price(final_stop, ticker)}</span>
+                    </div>
+                </div>
+            </div>
+            """
+            st.markdown(html_pyramid, unsafe_allow_html=True)
+
         info_col1, info_col2 = st.columns(2)
         with info_col1:
             st.markdown("<h4 style='color: #f8fafc; font-size: 1.1rem;'>☁️ 클라우드 4원칙 체크</h4>", unsafe_allow_html=True)
