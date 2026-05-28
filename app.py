@@ -466,6 +466,30 @@ def calculate_cloud_indicators(df):
                 logging.debug(f"수급 폭발 계산 오류: {e}")
                 pass
             
+        # 💡 컵 앤 핸들 (Cup and Handle) 패턴 판별 알고리즘
+        is_cup_and_handle = False
+        try:
+            if len(df) >= 60:
+                recent_60 = df.tail(60)
+                high_vals = recent_60['High'].values
+                low_vals = recent_60['Low'].values
+                close_vals = recent_60['Close'].values
+                
+                cup_high_idx = int(np.argmax(high_vals))
+                cup_high = float(high_vals[cup_high_idx])
+                
+                if cup_high_idx < 45:
+                    cup_low = float(np.min(low_vals[cup_high_idx:]))
+                    depth = (cup_high - cup_low) / cup_high
+                    
+                    if 0.10 <= depth <= 0.50:
+                        current_p = float(close_vals[-1])
+                        if cup_high * 0.90 <= current_p <= cup_high * 1.05:
+                            is_cup_and_handle = True
+        except Exception as e:
+            logging.debug(f"컵앤핸들 계산 오류: {e}")
+            pass
+            
         latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
         try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
         except Exception as e: 
@@ -481,6 +505,7 @@ def calculate_cloud_indicators(df):
             "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
             "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
             "Volume_Explosion": is_vol_explosion,
+            "Cup_and_Handle": is_cup_and_handle,
             "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
         }
         return df, indicators
@@ -578,7 +603,6 @@ with tab1:
 
     st.markdown(f"<h3 style='color: #f8fafc;'>📊 {actual_name} <span style='font-size: 0.6em; color: #64748b;'>{ticker}</span></h3>", unsafe_allow_html=True)
     
-    # 💡 [신규 추가] AI 추세선 토글 버튼
     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
     show_trendline = st.toggle("📐 AI 자동 추세선 작도 켜기 (삼각수렴, 지지/저항선 가이드)", value=True)
     
@@ -623,7 +647,6 @@ with tab1:
         
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5, dash='dash'), name='최대 매물대'), row=1, col=1)
         
-        # 💡 [신규 로직] AI 자동 추세선 작도 (삼각수렴 가이드)
         if show_trendline and len(display_df) > 20:
             order = 5
             highs = display_df['High'].values
@@ -638,23 +661,20 @@ with tab1:
                 if lows[i] == min(lows[i-order:i+order+1]):
                     valleys.append((i, lows[i]))
             
-            # 저항선 (최근 두 고점 연결)
             if len(peaks) >= 2:
                 p1, p2 = peaks[-2], peaks[-1]
-                if p2[0] > p1[0]: # 에러 방지
+                if p2[0] > p1[0]:
                     slope_h = (p2[1] - p1[1]) / (p2[0] - p1[0])
                     end_y_h = p2[1] + slope_h * ((len(display_df)-1) - p2[0])
                     fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추세)'), row=1, col=1)
                 
-            # 지지선 (최근 두 저점 연결)
             if len(valleys) >= 2:
                 v1, v2 = valleys[-2], valleys[-1]
-                if v2[0] > v1[0]: # 에러 방지
+                if v2[0] > v1[0]:
                     slope_l = (v2[1] - v1[1]) / (v2[0] - v1[0])
                     end_y_l = v2[1] + slope_l * ((len(display_df)-1) - v2[0])
                     fig.add_trace(go.Scatter(x=[dates[v1[0]], dates[-1]], y=[v1[1], end_y_l], mode='lines', line=dict(color='rgba(52, 211, 153, 0.8)', width=2, dash='dot'), name='지지선 (추세)'), row=1, col=1)
 
-        # 매수/매도 시스템 마커
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
         b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]
@@ -751,16 +771,13 @@ with tab1:
         )
         st.markdown(html_kpi, unsafe_allow_html=True)
 
-        # 💡 [신규 추가] 3분할 피라미드 매수 시나리오 토글
+        # 💡 3분할 피라미드 매수 시나리오 토글 (기본값 False로 원상복구)
         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
         show_pyramid = st.toggle("📊 3분할 피라미드 매수 설계도 보기 (2:3:5 법칙)", value=False)
         
         if show_pyramid:
-            # 3차 타점 및 최종 손절가 계산 (ATR 활용)
             entry3 = entry2 - float(tech_ind['ATR'])
             final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
-            
-            # 예상 평균 단가 계산 (가중 평균)
             avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
             
             html_pyramid = f"""
@@ -1189,6 +1206,7 @@ with tab3:
                             rr_2 = (tar_p - entry2) / denom if denom > 1e-5 else 0.0
                             
                             tags = []
+                            if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
@@ -1291,7 +1309,7 @@ with tab3:
         st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
         
         filter_mode = st.radio("전략 선택", 
-            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
+            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
             horizontal=True, label_visibility="collapsed"
         )
         
@@ -1300,6 +1318,8 @@ with tab3:
         
         if "S급 돌파" in filter_mode:
             df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
+        elif "컵 앤 핸들" in filter_mode:
+            df_view = df_all[df_all['포착원인'].str.contains('컵앤핸들')]
         elif "낙폭과대" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('RSI턴')]
         elif "수급폭발" in filter_mode:
