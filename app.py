@@ -74,6 +74,10 @@ st.markdown("""
     @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
     .stButton > button { border-radius: 12px !important; font-weight: 800 !important; transition: all 0.3s; background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #38bdf8 !important; }
     .stButton > button:hover { background-color: #38bdf8 !important; color: #0f172a !important; border-color: #38bdf8 !important; }
+    
+    /* 필터 버튼(Radio) 디자인 커스텀 */
+    div[role="radiogroup"] > label { background-color: #1e293b; padding: 10px 20px; border-radius: 12px; border: 1px solid #334155; margin-right: 10px; cursor: pointer; transition: all 0.2s;}
+    div[role="radiogroup"] > label:hover { border-color: #38bdf8; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -107,6 +111,10 @@ db = st.session_state.db_client
 
 for k in ['logged_in', 'user_id', 'user_tier']:
     if k not in st.session_state: st.session_state[k] = False if k == 'logged_in' else 'guest' if k == 'user_id' else 'Free'
+
+# 💡 스크리너 결과를 메모리에 저장하기 위한 세션 스테이트 초기화
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = None
 
 # 💡 상단 계정 및 환경 설정
 st.markdown("<h1 class='main-title'>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
@@ -1150,40 +1158,13 @@ with tab3:
                     
             txt.text("✅ 스캔 완료!")
             
+            # 💡 [핵심 최적화] 스캔 결과를 세션 스테이트(메모리)에 저장
             if res:
-                df_res = pd.DataFrame(res)
+                st.session_state.scan_results = res
                 
-                num_cols = df_res.select_dtypes(include=[np.number]).columns
-                df_res[num_cols] = df_res[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
-                
-                st.markdown("<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트</h4>", unsafe_allow_html=True)
-                
-                is_us = "미국" in mode
-                currency_format = "%.2f" if is_us else "%d"
-                col_suffix = "(달러)" if is_us else "(원)"
-                
-                st.dataframe(df_res, 
-                    column_config={
-                        "종목명": st.column_config.TextColumn("종목명", width="medium"),
-                        "시그널": st.column_config.TextColumn("AI 시그널"),
-                        "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
-                        "현재가": st.column_config.NumberColumn(f"현재가{col_suffix}", format=currency_format),
-                        "1차타점(대기)": st.column_config.NumberColumn(f"1차 매수{col_suffix}", format=currency_format),
-                        "목표가": st.column_config.NumberColumn(f"목표가{col_suffix}", format=currency_format),
-                        "손절가": st.column_config.NumberColumn(f"손절가{col_suffix}", format=currency_format),
-                        "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f"),
-                        "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
-                        "MACD": st.column_config.TextColumn("MACD 추세"),
-                        "볼린저상태": st.column_config.TextColumn("볼린저 밴드"),
-                        "시총(억)": st.column_config.NumberColumn("시가총액(억)", format="%d", help="미국 주식은 0으로 표기될 수 있습니다."),
-                        "거래대금(억)": st.column_config.NumberColumn("평균 거래대금(억)", format="%d")
-                    }, 
-                    hide_index=True, use_container_width=True
-                )
-                
-                st.download_button("📥 CSV 추출", data=df_res.to_csv(index=False).encode('utf-8-sig'), file_name="cloud_quant_screener.csv", mime="text/csv")
-                
+                # 텔레그램 전송 (최초 스캔 완료 시에만 발송)
                 if send_to_telegram:
+                    is_us = "미국" in mode
                     if tele_token and tele_chat_id:
                         chunks = []
                         msg = f"🚀 <b>프리미엄 퀀트 스캔 완료</b>\n\n총 {len(res)}개 특급 종목 발견\n\n"
@@ -1212,14 +1193,67 @@ with tab3:
                                 telegram_success = False
                             time.sleep(0.3)
                             
-                        if telegram_success:
-                            st.success("📱 텔레그램 전송 완료!")
-                        else:
-                            st.error("🚨 텔레그램 전송 실패! [계정 관리] 탭에서 Bot 토큰과 Chat ID가 올바른지 확인해 주세요.")
-                    else:
-                        st.warning("⚠️ 텔레그램 전송 생략: 봇 토큰(Token) 또는 챗 아이디(Chat ID)가 설정되어 있지 않습니다. 좌측 상단 [계정 관리] 탭에서 입력해 주세요.")
+                        if telegram_success: st.success("📱 텔레그램 전송 완료!")
+                        else: st.error("🚨 텔레그램 전송 실패! [계정 관리] 탭에서 Bot 토큰과 Chat ID를 확인해 주세요.")
+                    else: st.warning("⚠️ 텔레그램 전송 생략: 봇 토큰(Token) 또는 챗 아이디(Chat ID)가 없습니다.")
+
             else: 
+                st.session_state.scan_results = []
                 st.info("💡 스캔을 완료했으나, 현재 조건(월봉 10선 위 안전구간)을 통과한 종목이 없습니다.")
+
+    # 💡 [천재적인 UX 적용] 메모리에 저장된 결과를 기반으로 '즉시 필터링' 기능 구현
+    if st.session_state.scan_results:
+        st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
+        
+        # 필터 라디오 버튼
+        filter_mode = st.radio("전략 선택", 
+            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
+            horizontal=True, label_visibility="collapsed"
+        )
+        
+        # 데이터프레임 불러오기 및 기본 처리
+        df_all = pd.DataFrame(st.session_state.scan_results)
+        num_cols = df_all.select_dtypes(include=[np.number]).columns
+        df_all[num_cols] = df_all[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+        
+        # 즉각적인 Pandas 필터링 (서버 통신 없음!)
+        if "S급 돌파" in filter_mode:
+            df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
+        elif "낙폭과대" in filter_mode:
+            df_view = df_all[df_all['포착원인'].str.contains('RSI턴')]
+        elif "수급폭발" in filter_mode:
+            df_view = df_all[df_all['포착원인'].str.contains('수급폭발')]
+        else:
+            df_view = df_all
+            
+        st.markdown(f"<h4 style='color:#34d399; margin-top:20px;'>✨ 필터링 통과 종목 리스트 (총 {len(df_view)}개)</h4>", unsafe_allow_html=True)
+        
+        if len(df_view) > 0:
+            is_us = "미국" in mode if 'mode' in locals() else False
+            currency_format = "%.2f" if is_us else "%d"
+            col_suffix = "(달러)" if is_us else "(원)"
+            
+            st.dataframe(df_view, 
+                column_config={
+                    "종목명": st.column_config.TextColumn("종목명", width="medium"),
+                    "시그널": st.column_config.TextColumn("AI 시그널"),
+                    "포착원인": st.column_config.TextColumn("🔥포착원인", width="large"),
+                    "현재가": st.column_config.NumberColumn(f"현재가{col_suffix}", format=currency_format),
+                    "1차타점(대기)": st.column_config.NumberColumn(f"1차 매수{col_suffix}", format=currency_format),
+                    "목표가": st.column_config.NumberColumn(f"목표가{col_suffix}", format=currency_format),
+                    "손절가": st.column_config.NumberColumn(f"손절가{col_suffix}", format=currency_format),
+                    "손익비(배)": st.column_config.NumberColumn("손익비", format="%.1f"),
+                    "RSI": st.column_config.ProgressColumn("RSI 모멘텀", min_value=0, max_value=100, format="%.1f"),
+                    "MACD": st.column_config.TextColumn("MACD 추세"),
+                    "볼린저상태": st.column_config.TextColumn("볼린저 밴드"),
+                    "시총(억)": st.column_config.NumberColumn("시가총액(억)", format="%d"),
+                    "거래대금(억)": st.column_config.NumberColumn("평균 거래대금(억)", format="%d")
+                }, 
+                hide_index=True, use_container_width=True
+            )
+            st.download_button("📥 현재 표 CSV 추출", data=df_view.to_csv(index=False).encode('utf-8-sig'), file_name=f"quant_filtered_{len(df_view)}.csv", mime="text/csv")
+        else:
+            st.warning("이 필터 조건에 해당하는 종목이 없습니다. 다른 필터를 선택해 보세요.")
 
 # -----------------------------------------------------
 # [탭 4] Admin (최고 관리자 DB 관리 시스템)
