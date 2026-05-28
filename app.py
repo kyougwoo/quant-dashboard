@@ -1211,24 +1211,29 @@ with tab3:
         df_all = pd.DataFrame(st.session_state.scan_results)
         if not df_all.empty and '섹터' in df_all.columns:
             total_count = len(df_all)
-            sector_counts = df_all['섹터'].value_counts()
-            if not sector_counts.empty:
-                top_sector = sector_counts.index[0]
-                top_count = sector_counts.iloc[0]
-                top_ratio = (top_count / total_count) * 100
-                
-                if top_count >= 2: # 2개 이상일 때만 유의미한 쏠림으로 판단
-                    st.markdown(f"""
-                    <div style='background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(15, 23, 42, 0.8)); border-left: 4px solid #ef4444; padding: 20px; border-radius: 12px; margin-top: 25px; margin-bottom: 25px; border-right: 1px solid #334155; border-top: 1px solid #334155; border-bottom: 1px solid #334155;'>
-                        <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;'>
-                            🔥 <span style='color: #ef4444;'>AI 수급 쏠림 감지 엔진</span>
-                        </h4>
-                        <p style='color: #e2e8f0; font-size: 1.05rem; margin: 0; line-height: 1.6;'>
-                            오늘 타점이 포착된 <strong>{total_count}개</strong> 종목 중 <strong style='color: #fcd34d; font-size: 1.2rem; background: rgba(252, 211, 77, 0.1); padding: 2px 6px; border-radius: 4px;'>{top_count}개 ({top_ratio:.1f}%)</strong>가 <strong>[{top_sector}]</strong> 섹터에 집중되어 있습니다!<br>
-                            <span style='color: #94a3b8; font-size: 0.9rem; margin-top: 8px; display: inline-block;'>💡 스마트 머니(메이저 수급)가 해당 섹터로 강하게 유입 중일 확률이 높습니다. <strong>{top_sector}</strong> 관련주를 1순위로 확인하세요.</span>
-                        </p>
-                    </div>
-                    """, unsafe_allow_html=True)
+            
+            # 💡 [핵심 버그 수정] '기타분류', '제조/기타산업' 등 노이즈 데이터는 1등 후보에서 제외!
+            meaningful_df = df_all[~df_all['섹터'].isin(['기타분류', '제조/기타산업'])]
+            
+            if not meaningful_df.empty:
+                sector_counts = meaningful_df['섹터'].value_counts()
+                if not sector_counts.empty:
+                    top_sector = sector_counts.index[0]
+                    top_count = sector_counts.iloc[0]
+                    top_ratio = (top_count / total_count) * 100
+                    
+                    if top_count >= 2: # 2개 이상일 때만 유의미한 쏠림으로 판단
+                        st.markdown(f"""
+                        <div style='background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(15, 23, 42, 0.8)); border-left: 4px solid #ef4444; padding: 20px; border-radius: 12px; margin-top: 25px; margin-bottom: 25px; border-right: 1px solid #334155; border-top: 1px solid #334155; border-bottom: 1px solid #334155;'>
+                            <h4 style='color: #f8fafc; margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;'>
+                                🔥 <span style='color: #ef4444;'>AI 수급 쏠림 감지 엔진</span>
+                            </h4>
+                            <p style='color: #e2e8f0; font-size: 1.05rem; margin: 0; line-height: 1.6;'>
+                                오늘 타점이 포착된 <strong>{total_count}개</strong> 종목 중 <strong style='color: #fcd34d; font-size: 1.2rem; background: rgba(252, 211, 77, 0.1); padding: 2px 6px; border-radius: 4px;'>{top_count}개 ({top_ratio:.1f}%)</strong>가 <strong>[{top_sector}]</strong> 섹터에 집중되어 있습니다!<br>
+                                <span style='color: #94a3b8; font-size: 0.9rem; margin-top: 8px; display: inline-block;'>💡 스마트 머니(메이저 수급)가 해당 섹터로 강하게 유입 중일 확률이 높습니다. <strong>{top_sector}</strong> 관련주를 1순위로 확인하세요.</span>
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
                     
         st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
         
