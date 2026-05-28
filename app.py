@@ -582,30 +582,64 @@ with tab1:
         
     if df is not None and not df.empty:
         display_df = df.tail(120) 
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(56, 189, 248, 0.5)', width=1), name='BB 상단'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(56, 189, 248, 0.5)', width=1), fill='tonexty', fillcolor='rgba(56, 189, 248, 0.05)', name='BB 하단'), row=1, col=1)
-        fig.add_trace(go.Candlestick(x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], name="주가", increasing_line_color='#26a69a', decreasing_line_color='#ef5350'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#06b6d4', width=1.5), name='5일선'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#f59e0b', width=1.5), name='15일선'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#94a3b8', width=2, dash='dot'), name='200일선'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='#ef4444', width=2, dash='dash'), name='최대 매물대'), row=1, col=1)
         
+        # 💡 [디자인 개편] 한국 HTS 스타일의 직관적인 상승(빨강)/하락(파랑) 색상 적용 및 투명도 조절
+        color_up = '#ff4b4b' # 강렬한 상승(Red)
+        color_down = '#3b82f6' # 강렬한 하락(Blue)
+        
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
+        
+        # 볼린저 밴드 배경 (부드러운 클라우드 형태)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), name='BB 상단', showlegend=False), row=1, col=1)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), fill='tonexty', fillcolor='rgba(148, 163, 184, 0.05)', name='BB 영역', showlegend=False), row=1, col=1)
+        
+        # 메인 캔들 차트
+        fig.add_trace(go.Candlestick(
+            x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], 
+            name="주가", increasing_line_color=color_up, decreasing_line_color=color_down, increasing_fillcolor=color_up, decreasing_fillcolor=color_down
+        ), row=1, col=1)
+        
+        # 네온(Neon) 스타일 이평선
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#fcd34d', width=1.5), name='5일선'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#c084fc', width=1.5), name='15일선'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#9ca3af', width=2, dash='dot'), name='200일선'), row=1, col=1)
+        
+        # 기준선(매물대)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5, dash='dash'), name='최대 매물대'), row=1, col=1)
+        
+        # 매수/매도 시스템 마커
         b_x = [x for x in buy_m['x'] if x >= display_df.index[0]]
         b_y = [buy_m['y'][i] for i, x in enumerate(buy_m['x']) if x >= display_df.index[0]]
         s_x = [x for x in sell_m['x'] if x >= display_df.index[0]]
         s_y = [sell_m['y'][i] for i, x in enumerate(sell_m['x']) if x >= display_df.index[0]]
         
-        if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', size=14, color='#34d399', line=dict(width=1, color='#1e293b')), name='시스템 매수'), row=1, col=1)
-        if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=14, color='#f87171', line=dict(width=1, color='#1e293b')), name='시스템 매도'), row=1, col=1)
+        if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', size=16, color='#34d399', line=dict(width=1.5, color='#0f172a')), name='시스템 매수'), row=1, col=1)
+        if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=16, color='#f87171', line=dict(width=1.5, color='#0f172a')), name='시스템 매도'), row=1, col=1)
 
-        colors = ['#26a69a' if row['Close'] >= row['Open'] else '#ef5350' for _, row in display_df.iterrows()]
-        fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors, name='거래량'), row=2, col=1)
+        # 거래량 차트 (캔들 색상과 동기화 및 투명도 적용)
+        colors_vol = [color_up if row['Close'] >= row['Open'] else color_down for _, row in display_df.iterrows()]
+        fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors_vol, opacity=0.6, name='거래량'), row=2, col=1)
 
+        # 현재가 하이라이트 라인
         curr_p = float(df['Close'].iloc[-1])
         fig.add_hline(y=curr_p, line_dash="dot", line_color="#38bdf8", line_width=1.5, annotation_text=f"현재가: {format_price(curr_p, ticker)}", annotation_position="right", annotation_font=dict(color="white"), annotation_bgcolor="#0284c7", row=1, col=1)
 
-        fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, height=550, margin=dict(l=10, r=60, t=10, b=20), hovermode="x unified")
+        # 레이아웃 세부 조정 (TradingView 스타일의 깔끔한 그리드)
+        fig.update_layout(
+            template="plotly_dark", 
+            paper_bgcolor="rgba(0,0,0,0)", 
+            plot_bgcolor="rgba(0,0,0,0)", 
+            xaxis_rangeslider_visible=False, 
+            height=600, 
+            margin=dict(l=10, r=60, t=10, b=20), 
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        # 은은한 그리드 라인 적용
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
+
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
         html_summary = (
