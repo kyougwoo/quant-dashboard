@@ -587,8 +587,18 @@ with tab1:
         color_up = '#ff4b4b' # 강렬한 상승(Red)
         color_down = '#3b82f6' # 강렬한 하락(Blue)
         
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
+        # 💡 [기능 업그레이드] 4단 콤보 차트 생성 (주가, 거래량, MACD, RSI)
+        fig = make_subplots(
+            rows=4, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.02, 
+            row_heights=[0.5, 0.15, 0.15, 0.2],
+            subplot_titles=("", "", "MACD (12, 26, 9)", "RSI (14)")
+        )
         
+        # ----------------------------------------
+        # [1층] 메인 캔들 차트 및 이동평균선
+        # ----------------------------------------
         # 볼린저 밴드 배경 (부드러운 클라우드 형태)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), name='BB 상단', showlegend=False), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), fill='tonexty', fillcolor='rgba(148, 163, 184, 0.05)', name='BB 영역', showlegend=False), row=1, col=1)
@@ -616,29 +626,64 @@ with tab1:
         if b_x: fig.add_trace(go.Scatter(x=b_x, y=b_y, mode='markers', marker=dict(symbol='triangle-up', size=16, color='#34d399', line=dict(width=1.5, color='#0f172a')), name='시스템 매수'), row=1, col=1)
         if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=16, color='#f87171', line=dict(width=1.5, color='#0f172a')), name='시스템 매도'), row=1, col=1)
 
-        # 거래량 차트 (캔들 색상과 동기화 및 투명도 적용)
-        colors_vol = [color_up if row['Close'] >= row['Open'] else color_down for _, row in display_df.iterrows()]
-        fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors_vol, opacity=0.6, name='거래량'), row=2, col=1)
-
         # 현재가 하이라이트 라인
         curr_p = float(df['Close'].iloc[-1])
         fig.add_hline(y=curr_p, line_dash="dot", line_color="#38bdf8", line_width=1.5, annotation_text=f"현재가: {format_price(curr_p, ticker)}", annotation_position="right", annotation_font=dict(color="white"), annotation_bgcolor="#0284c7", row=1, col=1)
 
-        # 레이아웃 세부 조정 (TradingView 스타일의 깔끔한 그리드)
+        # ----------------------------------------
+        # [2층] 거래량 차트
+        # ----------------------------------------
+        colors_vol = [color_up if row['Close'] >= row['Open'] else color_down for _, row in display_df.iterrows()]
+        fig.add_trace(go.Bar(x=display_df.index, y=display_df['Volume'], marker_color=colors_vol, opacity=0.6, name='거래량'), row=2, col=1)
+
+        # ----------------------------------------
+        # [3층] MACD 차트 (골든크로스 하이라이트 포함)
+        # ----------------------------------------
+        colors_macd = ['#f87171' if val >= 0 else '#3b82f6' for val in display_df['MACD_Hist']]
+        fig.add_trace(go.Bar(x=display_df.index, y=display_df['MACD_Hist'], marker_color=colors_macd, opacity=0.5, name='MACD Hist'), row=3, col=1)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['MACD'], mode='lines', line=dict(color='#38bdf8', width=1.5), name='MACD'), row=3, col=1)
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['MACD_Signal'], mode='lines', line=dict(color='#fcd34d', width=1.5), name='Signal'), row=3, col=1)
+        
+        # MACD 골든크로스 타점 시각화 (초록색 화살표)
+        macd_cross_x = []
+        macd_cross_y = []
+        for i in range(1, len(display_df)):
+            if display_df['MACD'].iloc[i] > display_df['MACD_Signal'].iloc[i] and display_df['MACD'].iloc[i-1] <= display_df['MACD_Signal'].iloc[i-1]:
+                macd_cross_x.append(display_df.index[i])
+                macd_cross_y.append(display_df['MACD'].iloc[i])
+        if macd_cross_x:
+            fig.add_trace(go.Scatter(x=macd_cross_x, y=macd_cross_y, mode='markers', marker=dict(symbol='triangle-up', size=12, color='#34d399', line=dict(width=1, color='#0f172a')), name='MACD 골든크로스'), row=3, col=1)
+
+        # ----------------------------------------
+        # [4층] RSI 차트 (과매도 구간 하이라이트 포함)
+        # ----------------------------------------
+        fig.add_trace(go.Scatter(x=display_df.index, y=display_df['RSI'], mode='lines', line=dict(color='#c084fc', width=1.5), name='RSI'), row=4, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="#f87171", line_width=1, row=4, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="#38bdf8", line_width=1, row=4, col=1)
+        # 과매도(바닥) 구간 배경색 칠하기
+        fig.add_hrect(y0=0, y1=30, fillcolor="rgba(56, 189, 248, 0.15)", layer="below", line_width=0, row=4, col=1)
+
+        # ----------------------------------------
+        # 레이아웃 세부 조정
+        # ----------------------------------------
         fig.update_layout(
             template="plotly_dark", 
             paper_bgcolor="rgba(0,0,0,0)", 
             plot_bgcolor="rgba(0,0,0,0)", 
             xaxis_rangeslider_visible=False, 
-            height=600, 
-            margin=dict(l=10, r=60, t=10, b=20), 
+            height=900, # 4단 차트를 위해 높이 900으로 확장
+            margin=dict(l=10, r=60, t=40, b=20), 
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
-        # 은은한 그리드 라인 적용
+        # 각 서브플롯의 그리드 라인 처리 및 서브타이틀 폰트 크기/색상
+        fig.update_annotations(font_size=12, font_color="#94a3b8")
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
+        
+        # y축 범위 고정 (RSI)
+        fig.update_yaxes(range=[0, 100], row=4, col=1)
 
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
