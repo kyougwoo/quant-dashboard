@@ -895,10 +895,10 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
-            # 💡 [버그 수정 & 디자인 개선] 월별 수익 캘린더 날짜 형식 및 막대 디자인 수정
+            # 💡 [버그 수정 및 가계부 스타일 벤치마킹] X축 날짜 형식을 'YYYY년 MM월' 문자열로 완전히 강제 변환
             history_df['date'] = pd.to_datetime(history_df['date'])
             monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
-            # X축 표기용 (2026년 05월 형식)
+            # X축 데이터를 문자열(String)로 명시적 변환하여 Plotly가 시간축으로 오해하고 넓히는 현상 차단
             monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
             fig = go.Figure()
@@ -908,13 +908,13 @@ with tab2:
             bar_width = 0.3 if len(monthly_profit) == 1 else None
             
             fig.add_trace(go.Bar(
-                x=monthly_profit['date_str'], 
+                x=monthly_profit['date_str'], # 💡 수정: 카테고리형 X축 데이터 사용
                 y=monthly_profit['profit_krw'], 
                 marker_color=colors, 
                 text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], 
-                textposition='outside', # 텍스트를 막대 바깥으로 시원하게 빼기
+                textposition='outside', # 💡 수정: 텍스트를 막대 바깥으로 시원하게 빼기
                 textfont=dict(color='#f8fafc', size=13, family="Arial Black"),
-                width=bar_width,
+                width=bar_width, # 💡 수정: 단일 데이터일 경우 뚱뚱해지는 버그 방지
                 hovertemplate="<b>%{x}</b><br>누적 수익금: %{text}<extra></extra>"
             ))
             
@@ -933,13 +933,13 @@ with tab2:
                 paper_bgcolor="rgba(0,0,0,0)", 
                 plot_bgcolor="rgba(0,0,0,0)",
                 xaxis=dict(
-                    type='category', # 시간순 무한 확장을 막는 핵심 속성
+                    type='category', # 💡 핵심 수정: 시간순 무한 확장을 막는 핵심 속성
                     showgrid=False,
                     tickfont=dict(color='#cbd5e1', size=13)
                 ),
                 yaxis=dict(
                     showgrid=True,
-                    gridcolor='rgba(51, 65, 85, 0.4)', # 은은한 가로줄
+                    gridcolor='rgba(51, 65, 85, 0.4)', # 💡 은은한 가로줄
                     zeroline=True,
                     zerolinecolor='rgba(255,255,255,0.2)',
                     zerolinewidth=2,
