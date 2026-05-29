@@ -75,6 +75,7 @@ st.markdown("""
     .stButton > button { border-radius: 12px !important; font-weight: 800 !important; transition: all 0.3s; background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #38bdf8 !important; }
     .stButton > button:hover { background-color: #38bdf8 !important; color: #0f172a !important; border-color: #38bdf8 !important; }
     
+    /* 필터 버튼(Radio) 디자인 커스텀 */
     div[role="radiogroup"] > label { background-color: #1e293b; padding: 10px 20px; border-radius: 12px; border: 1px solid #334155; margin-right: 10px; cursor: pointer; transition: all 0.2s;}
     div[role="radiogroup"] > label:hover { border-color: #38bdf8; }
 </style>
@@ -111,9 +112,11 @@ db = st.session_state.db_client
 for k in ['logged_in', 'user_id', 'user_tier']:
     if k not in st.session_state: st.session_state[k] = False if k == 'logged_in' else 'guest' if k == 'user_id' else 'Free'
 
+# 💡 스크리너 결과를 메모리에 저장하기 위한 세션 스테이트 초기화
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 
+# 💡 상단 계정 및 환경 설정
 st.markdown("<h1 class='main-title'>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#94a3b8; margin-bottom: 25px;'>전문가용 다중 지표 차트 & LLM 기반 자동화 자산운용 대시보드</p>", unsafe_allow_html=True)
 
@@ -463,6 +466,7 @@ def calculate_cloud_indicators(df):
                 logging.debug(f"수급 폭발 계산 오류: {e}")
                 pass
             
+        # 💡 컵 앤 핸들 (Cup and Handle) 패턴 판별 알고리즘
         is_cup_and_handle = False
         try:
             if len(df) >= 60:
@@ -767,7 +771,7 @@ with tab1:
         )
         st.markdown(html_kpi, unsafe_allow_html=True)
 
-        # 💡 3분할 피라미드 매수 시나리오 토글 (기본값 False로 원상복구)
+        # 💡 3분할 피라미드 매수 시나리오 토글 (기본값 False)
         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
         show_pyramid = st.toggle("📊 3분할 피라미드 매수 설계도 보기 (2:3:5 법칙)", value=False)
         
@@ -895,62 +899,62 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
-            # 💡 [버그 수정 및 가계부 스타일 벤치마킹] X축 날짜 형식을 'YYYY년 MM월' 문자열로 완전히 강제 변환
+            # 💡 [버그 완벽 수정 및 UI/UX 디자인 강화 - 토스/뱅크샐러드 스타일]
             history_df['date'] = pd.to_datetime(history_df['date'])
             monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
-            # X축 데이터를 문자열(String)로 명시적 변환하여 Plotly가 시간축으로 오해하고 넓히는 현상 차단
+            
+            # 1. X축을 예쁜 한국어 문자열로 변환하여 시간축 오해 방지
             monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
             fig = go.Figure()
             colors = ['#34d399' if p > 0 else '#f87171' for p in monthly_profit['profit_krw']]
             
-            # 데이터가 1개일 때 막대가 차트를 꽉 채우는 현상 방지를 위해 width 속성 조건부 적용
-            bar_width = 0.3 if len(monthly_profit) == 1 else None
+            # 2. 데이터가 1개일 때 막대가 화면을 꽉 채우는 '초록 벽돌' 현상 방지
+            bar_width = [0.25] * len(monthly_profit) if len(monthly_profit) == 1 else None
             
             fig.add_trace(go.Bar(
-                x=monthly_profit['date_str'], # 💡 수정: 카테고리형 X축 데이터 사용
+                x=monthly_profit['date_str'], 
                 y=monthly_profit['profit_krw'], 
                 marker_color=colors, 
                 text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], 
-                textposition='outside', # 💡 수정: 텍스트를 막대 바깥으로 시원하게 빼기
-                textfont=dict(color='#f8fafc', size=13, family="Arial Black"),
-                width=bar_width, # 💡 수정: 단일 데이터일 경우 뚱뚱해지는 버그 방지
-                hovertemplate="<b>%{x}</b><br>누적 수익금: %{text}<extra></extra>"
+                textposition='outside', # 텍스트를 막대 밖으로 시원하게 빼기
+                textfont=dict(color='#f8fafc', size=14, family="Arial Black"),
+                width=bar_width,
+                marker_line_width=0, # 테두리 제거로 모던한 느낌
+                hovertemplate="<b>%{x}</b><br>총 실현수익: %{text}<extra></extra>"
             ))
             
-            # y축 범위 여유있게 설정 (막대 위쪽 텍스트가 잘리지 않도록)
-            max_val = monthly_profit['profit_krw'].max()
-            min_val = monthly_profit['profit_krw'].min()
-            y_max = max_val * 1.2 if max_val > 0 else max_val * 0.8
-            y_min = min_val * 1.2 if min_val < 0 else 0
-            if y_max == 0 and y_min == 0: y_max = 100
+            # 3. Y축 여유 공간 확보 (Outside 글씨가 천장에 잘리지 않도록)
+            y_max = monthly_profit['profit_krw'].max() * 1.3 if monthly_profit['profit_krw'].max() > 0 else 100
+            y_min = monthly_profit['profit_krw'].min() * 1.3 if monthly_profit['profit_krw'].min() < 0 else 0
             
             fig.update_layout(
                 template="plotly_dark", 
-                title="월별 누적 실현 수익금", 
-                height=350, 
-                margin=dict(l=10, r=10, t=40, b=20),
+                title=dict(text="📈 월별 누적 실현 수익금", font=dict(size=18, color="#cbd5e1")),
+                height=380, 
+                margin=dict(l=10, r=10, t=60, b=20),
                 paper_bgcolor="rgba(0,0,0,0)", 
                 plot_bgcolor="rgba(0,0,0,0)",
                 xaxis=dict(
-                    type='category', # 💡 핵심 수정: 시간순 무한 확장을 막는 핵심 속성
+                    type='category', # 💡 핵심: 카테고리형 강제 지정 (절대 늘어나지 않음)
                     showgrid=False,
-                    tickfont=dict(color='#cbd5e1', size=13)
+                    tickfont=dict(color='#94a3b8', size=13)
                 ),
                 yaxis=dict(
                     showgrid=True,
-                    gridcolor='rgba(51, 65, 85, 0.4)', # 💡 은은한 가로줄
+                    gridcolor='rgba(51, 65, 85, 0.4)', # 은은한 가로줄 추가
                     zeroline=True,
                     zerolinecolor='rgba(255,255,255,0.2)',
                     zerolinewidth=2,
                     tickfont=dict(color='#94a3b8'),
                     range=[y_min, y_max]
                 ),
-                showlegend=False
+                showlegend=False,
+                hoverlabel=dict(bgcolor="#1e293b", font_size=14, bordercolor="#38bdf8")
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            st.markdown("#### 📝 최근 매도 기록 (가계부)")
+            st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 15px;'>📝 최근 매도 기록 (가계부)</h4>", unsafe_allow_html=True)
             st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
                          column_config={"date": "매도일자", "ticker": "종목", "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d"), "memo": "메모"}, hide_index=True, use_container_width=True)
         else:
