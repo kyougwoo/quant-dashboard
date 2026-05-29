@@ -75,7 +75,6 @@ st.markdown("""
     .stButton > button { border-radius: 12px !important; font-weight: 800 !important; transition: all 0.3s; background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #38bdf8 !important; }
     .stButton > button:hover { background-color: #38bdf8 !important; color: #0f172a !important; border-color: #38bdf8 !important; }
     
-    /* 필터 버튼(Radio) 디자인 커스텀 */
     div[role="radiogroup"] > label { background-color: #1e293b; padding: 10px 20px; border-radius: 12px; border: 1px solid #334155; margin-right: 10px; cursor: pointer; transition: all 0.2s;}
     div[role="radiogroup"] > label:hover { border-color: #38bdf8; }
 </style>
@@ -112,11 +111,9 @@ db = st.session_state.db_client
 for k in ['logged_in', 'user_id', 'user_tier']:
     if k not in st.session_state: st.session_state[k] = False if k == 'logged_in' else 'guest' if k == 'user_id' else 'Free'
 
-# 💡 스크리너 결과를 메모리에 저장하기 위한 세션 스테이트 초기화
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 
-# 💡 상단 계정 및 환경 설정
 st.markdown("<h1 class='main-title'>☁️ 클라우드 퀀트 PRO<span class='title-by'>by 지후아빠</span></h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#94a3b8; margin-bottom: 25px;'>전문가용 다중 지표 차트 & LLM 기반 자동화 자산운용 대시보드</p>", unsafe_allow_html=True)
 
@@ -466,7 +463,6 @@ def calculate_cloud_indicators(df):
                 logging.debug(f"수급 폭발 계산 오류: {e}")
                 pass
             
-        # 💡 컵 앤 핸들 (Cup and Handle) 패턴 판별 알고리즘
         is_cup_and_handle = False
         try:
             if len(df) >= 60:
@@ -899,15 +895,60 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
+            # 💡 [버그 수정 & 디자인 개선] 월별 수익 캘린더 날짜 형식 및 막대 디자인 수정
             history_df['date'] = pd.to_datetime(history_df['date'])
             monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
-            monthly_profit['date'] = monthly_profit['date'].astype(str)
+            # X축 표기용 (2026년 05월 형식)
+            monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
             fig = go.Figure()
             colors = ['#34d399' if p > 0 else '#f87171' for p in monthly_profit['profit_krw']]
-            fig.add_trace(go.Bar(x=monthly_profit['date'], y=monthly_profit['profit_krw'], marker_color=colors, text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], textposition='auto'))
-            fig.update_layout(template="plotly_dark", title="월별 누적 실현 수익금", height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
+            
+            # 데이터가 1개일 때 막대가 차트를 꽉 채우는 현상 방지를 위해 width 속성 조건부 적용
+            bar_width = 0.3 if len(monthly_profit) == 1 else None
+            
+            fig.add_trace(go.Bar(
+                x=monthly_profit['date_str'], 
+                y=monthly_profit['profit_krw'], 
+                marker_color=colors, 
+                text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], 
+                textposition='outside', # 텍스트를 막대 바깥으로 시원하게 빼기
+                textfont=dict(color='#f8fafc', size=13, family="Arial Black"),
+                width=bar_width,
+                hovertemplate="<b>%{x}</b><br>누적 수익금: %{text}<extra></extra>"
+            ))
+            
+            # y축 범위 여유있게 설정 (막대 위쪽 텍스트가 잘리지 않도록)
+            max_val = monthly_profit['profit_krw'].max()
+            min_val = monthly_profit['profit_krw'].min()
+            y_max = max_val * 1.2 if max_val > 0 else max_val * 0.8
+            y_min = min_val * 1.2 if min_val < 0 else 0
+            if y_max == 0 and y_min == 0: y_max = 100
+            
+            fig.update_layout(
+                template="plotly_dark", 
+                title="월별 누적 실현 수익금", 
+                height=350, 
+                margin=dict(l=10, r=10, t=40, b=20),
+                paper_bgcolor="rgba(0,0,0,0)", 
+                plot_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(
+                    type='category', # 시간순 무한 확장을 막는 핵심 속성
+                    showgrid=False,
+                    tickfont=dict(color='#cbd5e1', size=13)
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor='rgba(51, 65, 85, 0.4)', # 은은한 가로줄
+                    zeroline=True,
+                    zerolinecolor='rgba(255,255,255,0.2)',
+                    zerolinewidth=2,
+                    tickfont=dict(color='#94a3b8'),
+                    range=[y_min, y_max]
+                ),
+                showlegend=False
+            )
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
             st.markdown("#### 📝 최근 매도 기록 (가계부)")
             st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
