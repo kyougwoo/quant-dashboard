@@ -216,56 +216,28 @@ def save_portfolio(data):
             pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
-# 💡 [버그 완벽 차단] 로컬 파일(json)에서도 가계부 데이터를 안전하게 불러오도록 기능 복구
 def load_ledger():
-    default_data = {'history': []}
     if db:
         try:
             doc = db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).get()
-            if doc.exists: return doc.to_dict()
+            return doc.to_dict() if doc.exists else {'history': []}
         except Exception as e: 
             logging.warning(f"가계부 로드 실패: {e}")
-            pass
-    
-    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
-    if os.path.exists(file_name):
-        try:
-            with open(file_name, 'r') as f: return json.load(f)
-        except Exception as e:
-            logging.warning(f"로컬 가계부 로드 실패: {e}")
-            pass
-    return default_data
+            return {'history': []}
+    return {'history': []}
 
-# 💡 [버그 완벽 차단] 로컬 파일(json)에도 가계부 데이터를 저장하여 휘발성 증발 방지
 def save_ledger(data):
     if db:
         try: 
             db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
-            return
         except Exception as e: 
             logging.error(f"가계부 저장 실패: {e}")
             pass
-    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
-    with open(file_name, 'w') as f: json.dump(data, f)
 
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
-
-# 💡 [긴급 특수 복구 엔진] 날아갔던 대표님의 KORU 수익 기록을 스크린샷 데이터 기반으로 자동 복구합니다!
 if 'ledger_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.ledger_data = load_ledger()
-    
-    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
-    if not os.path.exists(file_name) and len(st.session_state.ledger_data.get('history', [])) == 0:
-        # 단 한 번, 가계부가 완전히 비어있을 때 KORU 내역을 되살립니다.
-        st.session_state.ledger_data['history'].append({
-            'id': 'recovery_koru_1',
-            'date': '2026-05-29 01:39:00',
-            'ticker': 'KORU',
-            'profit_krw': 47145781.0, # 스크린샷 기준 정확한 수익금 복원
-            'memo': '30.0주 매도'
-        })
-        save_ledger(st.session_state.ledger_data)
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
@@ -584,7 +556,6 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
-# 💡 [업데이트] 포트폴리오 현재가 캐싱 시간을 1시간(3600) -> 1분(60초)으로 단축하여 실시간 체감 속도 극대화
 @st.cache_data(ttl=60)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
@@ -599,7 +570,6 @@ def get_portfolio_stock_data(ticker):
         logging.warning(f"포트폴리오 현재가 로드 오류 ({ticker}): {e}")
         return 0.0, 0.0
 
-# 💡 [업데이트] 환율 정보 캐싱 시간도 1시간(3600) -> 10분(600초)으로 단축
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try:
@@ -808,33 +778,23 @@ with tab1:
             final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
             avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
             
-            html_pyramid = f"""
-            <div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>
-                <h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>
-                <div style='display: flex; flex-direction: column; gap: 10px; font-family: monospace; font-size: 1rem; color: #e2e8f0;'>
-                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
-                        <span>1차 매수 (비중 20%)</span>
-                        <span style='color: #f8fafc; font-weight: bold;'>{format_price(entry1, ticker)}</span>
-                    </div>
-                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
-                        <span>2차 매수 (비중 30%)</span>
-                        <span style='color: #f8fafc; font-weight: bold;'>{format_price(entry2, ticker)}</span>
-                    </div>
-                    <div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>
-                        <span>3차 매수 (비중 50%)</span>
-                        <span style='color: #fcd34d; font-weight: bold;'>{format_price(entry3, ticker)}</span>
-                    </div>
-                    <div style='display: flex; justify-content: space-between; margin-top: 10px; padding: 10px; background: rgba(56, 189, 248, 0.1); border-radius: 8px;'>
-                        <span>✨ 예상 평균 단가</span>
-                        <span style='color: #38bdf8; font-weight: bold;'>{format_price(avg_price, ticker)}</span>
-                    </div>
-                    <div style='display: flex; justify-content: space-between; margin-top: 5px; padding: 10px; background: rgba(248, 113, 113, 0.1); border-radius: 8px;'>
-                        <span>🚨 최종 손절선 (3차 이탈 시)</span>
-                        <span style='color: #f87171; font-weight: bold;'>{format_price(final_stop, ticker)}</span>
-                    </div>
-                </div>
-            </div>
-            """
+            # 💡 [버그 완벽 차단] 줄바꿈 시 들여쓰기를 하지 않아 마크다운 엔진이 코드블록으로 오인하는 것을 방지!
+            html_pyramid = (
+                f"<div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>"
+                f"<h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>"
+                f"<div style='display: flex; flex-direction: column; gap: 10px; font-family: monospace; font-size: 1rem; color: #e2e8f0;'>"
+                f"<div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>"
+                f"<span>1차 매수 (비중 20%)</span><span style='color: #f8fafc; font-weight: bold;'>{format_price(entry1, ticker)}</span></div>"
+                f"<div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>"
+                f"<span>2차 매수 (비중 30%)</span><span style='color: #f8fafc; font-weight: bold;'>{format_price(entry2, ticker)}</span></div>"
+                f"<div style='display: flex; justify-content: space-between; padding-bottom: 5px; border-bottom: 1px solid #334155;'>"
+                f"<span>3차 매수 (비중 50%)</span><span style='color: #fcd34d; font-weight: bold;'>{format_price(entry3, ticker)}</span></div>"
+                f"<div style='display: flex; justify-content: space-between; margin-top: 10px; padding: 10px; background: rgba(56, 189, 248, 0.1); border-radius: 8px;'>"
+                f"<span>✨ 예상 평균 단가</span><span style='color: #38bdf8; font-weight: bold;'>{format_price(avg_price, ticker)}</span></div>"
+                f"<div style='display: flex; justify-content: space-between; margin-top: 5px; padding: 10px; background: rgba(248, 113, 113, 0.1); border-radius: 8px;'>"
+                f"<span>🚨 최종 손절선 (3차 이탈 시)</span><span style='color: #f87171; font-weight: bold;'>{format_price(final_stop, ticker)}</span></div>"
+                f"</div></div>"
+            )
             st.markdown(html_pyramid, unsafe_allow_html=True)
 
         info_col1, info_col2 = st.columns(2)
@@ -1035,7 +995,7 @@ with tab2:
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>💵 보유 현금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(remaining_cash):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>📦 투자 원금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(total_invested_krw):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px; border-color: #38bdf8;'><div class='kpi-title'>💎 총 자산</div><div class='kpi-value-main' style='font-size: 1.4rem; color: #38bdf8;'>{int(total_asset_value_krw):,}원</div></div>"
-        f"<div class='kpi-card' style='padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
         "</div>"
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
@@ -1105,11 +1065,12 @@ with tab2:
                     if idx is not None: p_data['stocks'].pop(idx); save_portfolio(p_data); st.rerun()
 
     if not dis_df.empty:
-        st.markdown("<h4 style='color: #38bdf8; margin-top: 30px; margin-bottom: 20px; font-weight: 800;'>📊 실시간 포트폴리오 현황 (스마트 트레일링 가동중)</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #f8fafc; margin-top: 30px; margin-bottom: 20px; font-weight: 800;'>📊 실시간 포트폴리오 현황 (스마트 트레일링 가동중)</h4>", unsafe_allow_html=True)
         
         # --- 1. 직관적인 카드 뷰 UI (모바일/웹 친화적) ---
         def fmt_price(val, cur): return f"${val:,.2f}" if cur == 'USD' else f"{int(val):,}원"
         
+        # 💡 [핵심 버그 수정] 마크다운 엔진이 소스 코드로 오인하지 않도록 띄어쓰기(들여쓰기) 완전 제거 평탄화
         cards_html = "<div style='display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 30px;'>"
         for _, row in dis_df.iterrows():
             is_profit = row['수익률(%)'] > 0
@@ -1118,29 +1079,26 @@ with tab2:
             bg_color = "rgba(248, 113, 113, 0.05)" if is_profit else ("rgba(96, 165, 250, 0.05)" if is_loss else "rgba(148, 163, 184, 0.05)")
             border_color = "rgba(248, 113, 113, 0.3)" if is_profit else ("rgba(96, 165, 250, 0.3)" if is_loss else "rgba(148, 163, 184, 0.3)")
             
-            cards_html += f"""
-            <div style='background: {bg_color}; border: 1px solid {border_color}; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;'>
-                    <h4 style='color: #f8fafc; margin: 0; font-size: 1.25rem; font-weight: 800;'>{row['종목명']}</h4>
-                    <span style='background: {color}20; color: {color}; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 1rem;'>
-                        {row['수익률(%)']:.2f}%
-                    </span>
-                </div>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>
-                    <span style='color: #94a3b8; font-size: 0.95rem;'>현재가</span>
-                    <span style='color: #f8fafc; font-weight: 700;'>{fmt_price(row['현재가'], row['통화'])}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>
-                    <span style='color: #94a3b8; font-size: 0.95rem;'>평가 손익</span>
-                    <span style='color: {color}; font-weight: 800;'>{fmt_price(row['수익금'], row['통화'])}</span>
-                </div>
-                <div style='border-top: 1px dashed rgba(255,255,255,0.1); margin: 15px 0;'></div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #94a3b8; font-size: 0.95rem;'>🛡️ 트레일링 방어선</span>
-                    <span style='color: #fbbf24; font-weight: 800; font-size: 1.1rem;'>{fmt_price(row['🛡️손절/익절가'], row['통화'])}</span>
-                </div>
-            </div>
-            """
+            cards_html += (
+                f"<div style='background: {bg_color}; border: 1px solid {border_color}; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'>"
+                f"<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;'>"
+                f"<h4 style='color: #f8fafc; margin: 0; font-size: 1.25rem; font-weight: 800;'>{row['종목명']}</h4>"
+                f"<span style='background: {color}20; color: {color}; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 1rem;'>{row['수익률(%)']:.2f}%</span>"
+                f"</div>"
+                f"<div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>"
+                f"<span style='color: #94a3b8; font-size: 0.95rem;'>현재가</span>"
+                f"<span style='color: #f8fafc; font-weight: 700;'>{fmt_price(row['현재가'], row['통화'])}</span>"
+                f"</div>"
+                f"<div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>"
+                f"<span style='color: #94a3b8; font-size: 0.95rem;'>평가 손익</span>"
+                f"<span style='color: {color}; font-weight: 800;'>{fmt_price(row['수익금'], row['통화'])}</span>"
+                f"</div>"
+                f"<div style='border-top: 1px dashed rgba(255,255,255,0.1); margin: 15px 0;'></div>"
+                f"<div style='display: flex; justify-content: space-between; align-items: center;'>"
+                f"<span style='color: #94a3b8; font-size: 0.95rem;'>🛡️ 트레일링 방어선</span>"
+                f"<span style='color: #fbbf24; font-weight: 800; font-size: 1.1rem;'>{fmt_price(row['🛡️손절/익절가'], row['통화'])}</span>"
+                f"</div></div>"
+            )
         cards_html += "</div>"
         st.markdown(cards_html, unsafe_allow_html=True)
         
