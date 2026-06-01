@@ -1105,15 +1105,56 @@ with tab2:
                     if idx is not None: p_data['stocks'].pop(idx); save_portfolio(p_data); st.rerun()
 
     if not dis_df.empty:
-        st.markdown("<h4 style='color: #f8fafc; margin-top: 20px;'>📋 보유 종목 (스마트 트레일링 적용)</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: #38bdf8; margin-top: 30px; margin-bottom: 20px; font-weight: 800;'>📊 실시간 포트폴리오 현황 (스마트 트레일링 가동중)</h4>", unsafe_allow_html=True)
         
-        view_df = dis_df.drop(columns=['평가금액', '섹터', '원화평가금액'])
+        # --- 1. 직관적인 카드 뷰 UI (모바일/웹 친화적) ---
+        def fmt_price(val, cur): return f"${val:,.2f}" if cur == 'USD' else f"{int(val):,}원"
+        
+        cards_html = "<div style='display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 30px;'>"
+        for _, row in dis_df.iterrows():
+            is_profit = row['수익률(%)'] > 0
+            is_loss = row['수익률(%)'] < 0
+            color = "#f87171" if is_profit else ("#60a5fa" if is_loss else "#94a3b8")
+            bg_color = "rgba(248, 113, 113, 0.05)" if is_profit else ("rgba(96, 165, 250, 0.05)" if is_loss else "rgba(148, 163, 184, 0.05)")
+            border_color = "rgba(248, 113, 113, 0.3)" if is_profit else ("rgba(96, 165, 250, 0.3)" if is_loss else "rgba(148, 163, 184, 0.3)")
+            
+            cards_html += f"""
+            <div style='background: {bg_color}; border: 1px solid {border_color}; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;'>
+                    <h4 style='color: #f8fafc; margin: 0; font-size: 1.25rem; font-weight: 800;'>{row['종목명']}</h4>
+                    <span style='background: {color}20; color: {color}; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 1rem;'>
+                        {row['수익률(%)']:.2f}%
+                    </span>
+                </div>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>
+                    <span style='color: #94a3b8; font-size: 0.95rem;'>현재가</span>
+                    <span style='color: #f8fafc; font-weight: 700;'>{fmt_price(row['현재가'], row['통화'])}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; margin-bottom: 10px;'>
+                    <span style='color: #94a3b8; font-size: 0.95rem;'>평가 손익</span>
+                    <span style='color: {color}; font-weight: 800;'>{fmt_price(row['수익금'], row['통화'])}</span>
+                </div>
+                <div style='border-top: 1px dashed rgba(255,255,255,0.1); margin: 15px 0;'></div>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #94a3b8; font-size: 0.95rem;'>🛡️ 트레일링 방어선</span>
+                    <span style='color: #fbbf24; font-weight: 800; font-size: 1.1rem;'>{fmt_price(row['🛡️손절/익절가'], row['통화'])}</span>
+                </div>
+            </div>
+            """
+        cards_html += "</div>"
+        st.markdown(cards_html, unsafe_allow_html=True)
+        
+        # --- 2. 편집 가능한 데이터 테이블 ---
+        st.markdown("<p style='color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;'>💡 <b>매수단가</b>와 <b>수량</b>의 숫자를 더블클릭하여 직접 수정할 수 있습니다.</p>", unsafe_allow_html=True)
+        
+        # 가독성을 위해 컬럼 순서 직관적으로 재배치
+        view_df = dis_df[['종목명', '통화', '매수단가', '수량', '현재가', '수익금', '수익률(%)', '🛡️손절/익절가']]
         
         def highlight_profit(val):
             try:
                 v = float(val)
-                if v > 0: return 'color: #f87171; font-weight: bold;'
-                elif v < 0: return 'color: #60a5fa; font-weight: bold;'
+                if v > 0: return 'color: #f87171; font-weight: 800; background-color: rgba(248, 113, 113, 0.05);'
+                elif v < 0: return 'color: #60a5fa; font-weight: 800; background-color: rgba(96, 165, 250, 0.05);'
                 else: return ''
             except: return ''
             
@@ -1122,13 +1163,14 @@ with tab2:
 
         edt_df = st.data_editor(styled_df, 
             column_config={
-                "통화": st.column_config.TextColumn("통화", disabled=True),
-                "매수단가": st.column_config.NumberColumn("매수단가", format="%d"),
-                "수량": st.column_config.NumberColumn("수량", format="%d"),
-                "현재가": st.column_config.NumberColumn("현재가", format="%d", disabled=True), 
-                "수익금": st.column_config.NumberColumn("수익금", format="%d", disabled=True), 
-                "수익률(%)": st.column_config.NumberColumn("수익률(%)", format="%.2f", disabled=True),
-                "🛡️손절/익절가": st.column_config.NumberColumn("손절/익절가", format="%d", disabled=True)
+                "종목명": st.column_config.TextColumn("📌 종목명", disabled=True),
+                "통화": st.column_config.TextColumn("💱 통화", disabled=True),
+                "매수단가": st.column_config.NumberColumn("🛒 매수단가", format="%d"),
+                "수량": st.column_config.NumberColumn("📦 수량", format="%d"),
+                "현재가": st.column_config.NumberColumn("📈 현재가", format="%d", disabled=True), 
+                "수익금": st.column_config.NumberColumn("💰 수익금", format="%d", disabled=True), 
+                "수익률(%)": st.column_config.NumberColumn("🔥 수익률(%)", format="%.2f", disabled=True),
+                "🛡️손절/익절가": st.column_config.NumberColumn("🛡️ 방어선", format="%d", disabled=True)
             }, hide_index=True, use_container_width=True
         )
         
