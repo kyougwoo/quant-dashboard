@@ -216,28 +216,56 @@ def save_portfolio(data):
             pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
+# 💡 [버그 완벽 차단] 로컬 파일(json)에서도 가계부 데이터를 안전하게 불러오도록 기능 복구
 def load_ledger():
+    default_data = {'history': []}
     if db:
         try:
             doc = db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).get()
-            return doc.to_dict() if doc.exists else {'history': []}
+            if doc.exists: return doc.to_dict()
         except Exception as e: 
             logging.warning(f"가계부 로드 실패: {e}")
-            return {'history': []}
-    return {'history': []}
+            pass
+    
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, 'r') as f: return json.load(f)
+        except Exception as e:
+            logging.warning(f"로컬 가계부 로드 실패: {e}")
+            pass
+    return default_data
 
+# 💡 [버그 완벽 차단] 로컬 파일(json)에도 가계부 데이터를 저장하여 휘발성 증발 방지
 def save_ledger(data):
     if db:
         try: 
             db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
+            return
         except Exception as e: 
             logging.error(f"가계부 저장 실패: {e}")
             pass
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    with open(file_name, 'w') as f: json.dump(data, f)
 
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
+
+# 💡 [긴급 특수 복구 엔진] 날아갔던 대표님의 KORU 수익 기록을 스크린샷 데이터 기반으로 자동 복구합니다!
 if 'ledger_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.ledger_data = load_ledger()
+    
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    if not os.path.exists(file_name) and len(st.session_state.ledger_data.get('history', [])) == 0:
+        # 단 한 번, 가계부가 완전히 비어있을 때 KORU 내역을 되살립니다.
+        st.session_state.ledger_data['history'].append({
+            'id': 'recovery_koru_1',
+            'date': '2026-05-29 01:39:00',
+            'ticker': 'KORU',
+            'profit_krw': 47145781.0, # 스크린샷 기준 정확한 수익금 복원
+            'memo': '30.0주 매도'
+        })
+        save_ledger(st.session_state.ledger_data)
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
@@ -556,6 +584,7 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
+# 💡 1분 실시간 로딩 적용
 @st.cache_data(ttl=60)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
@@ -778,7 +807,7 @@ with tab1:
             final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
             avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
             
-            # 💡 [버그 완벽 차단] 줄바꿈 시 들여쓰기를 하지 않아 마크다운 엔진이 코드블록으로 오인하는 것을 방지!
+            # 💡 [버그 완벽 차단] HTML 코드가 마크다운 엔진에 의해 끊기지 않도록 모두 평탄화
             html_pyramid = (
                 f"<div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>"
                 f"<h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>"
@@ -995,21 +1024,32 @@ with tab2:
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>💵 보유 현금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(remaining_cash):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>📦 투자 원금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(total_invested_krw):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px; border-color: #38bdf8;'><div class='kpi-title'>💎 총 자산</div><div class='kpi-value-main' style='font-size: 1.4rem; color: #38bdf8;'>{int(total_asset_value_krw):,}원</div></div>"
-        f"<div class='kpi-card' style='padding: 15px; border-color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
         "</div>"
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
     
+    # 💡 [기능 개선] 자산 배분 파이 차트에 '보유 현금' 섹터 추가
+    pie_labels = []
+    pie_values = []
+    
     if not dis_df.empty:
         sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
-        sector_val = sector_val[sector_val['원화평가금액'] > 0]
+        for _, row in sector_val.iterrows():
+            if row['원화평가금액'] > 0:
+                pie_labels.append(row['섹터'])
+                pie_values.append(row['원화평가금액'])
+                
+    if remaining_cash > 0:
+        pie_labels.append("💵 보유 현금")
+        pie_values.append(remaining_cash)
         
-        if not sector_val.empty:
-            fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
-            fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info("💡 파이 차트를 그리려면 0원 이상의 포트폴리오 자산이 필요합니다.")
+    if pie_labels and pie_values:
+        fig_pie = go.Figure(data=[go.Pie(labels=pie_labels, values=pie_values, hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9', '#94a3b8', '#64748b']))])
+        fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (현금 포함)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.info("💡 상단 '초기 자본금 세팅'에 금액을 입력하시거나 주식을 매수하여 자산 배분 차트를 활성화하세요.")
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
