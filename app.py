@@ -584,7 +584,8 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
-@st.cache_data(ttl=3600)
+# 💡 [업데이트] 포트폴리오 현재가 캐싱 시간을 1시간(3600) -> 1분(60초)으로 단축하여 실시간 체감 속도 극대화
+@st.cache_data(ttl=60)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
     try:
@@ -598,7 +599,8 @@ def get_portfolio_stock_data(ticker):
         logging.warning(f"포트폴리오 현재가 로드 오류 ({ticker}): {e}")
         return 0.0, 0.0
 
-@st.cache_data(ttl=3600)
+# 💡 [업데이트] 환율 정보 캐싱 시간도 1시간(3600) -> 10분(600초)으로 단축
+@st.cache_data(ttl=600)
 def get_exchange_rate():
     try:
         df = fdr.DataReader('USD/KRW', (datetime.today() - timedelta(days=5)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
