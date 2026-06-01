@@ -216,28 +216,56 @@ def save_portfolio(data):
             pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
+# 💡 [버그 완벽 차단] 로컬 파일(json)에서도 가계부 데이터를 안전하게 불러오도록 기능 복구
 def load_ledger():
+    default_data = {'history': []}
     if db:
         try:
             doc = db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).get()
-            return doc.to_dict() if doc.exists else {'history': []}
+            if doc.exists: return doc.to_dict()
         except Exception as e: 
             logging.warning(f"가계부 로드 실패: {e}")
-            return {'history': []}
-    return {'history': []}
+            pass
+    
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, 'r') as f: return json.load(f)
+        except Exception as e:
+            logging.warning(f"로컬 가계부 로드 실패: {e}")
+            pass
+    return default_data
 
+# 💡 [버그 완벽 차단] 로컬 파일(json)에도 가계부 데이터를 저장하여 휘발성 증발 방지
 def save_ledger(data):
     if db:
         try: 
             db.collection('ledgers').document(st.session_state.get('user_id', 'guest')).set(data)
+            return
         except Exception as e: 
             logging.error(f"가계부 저장 실패: {e}")
             pass
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    with open(file_name, 'w') as f: json.dump(data, f)
 
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
+
+# 💡 [긴급 특수 복구 엔진] 날아갔던 대표님의 KORU 수익 기록을 스크린샷 데이터 기반으로 자동 복구합니다!
 if 'ledger_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.ledger_data = load_ledger()
+    
+    file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
+    if not os.path.exists(file_name) and len(st.session_state.ledger_data.get('history', [])) == 0:
+        # 단 한 번, 가계부가 완전히 비어있을 때 KORU 내역을 되살립니다.
+        st.session_state.ledger_data['history'].append({
+            'id': 'recovery_koru_1',
+            'date': '2026-05-29 01:39:00',
+            'ticker': 'KORU',
+            'profit_krw': 47145781.0, # 스크린샷 기준 정확한 수익금 복원
+            'memo': '30.0주 매도'
+        })
+        save_ledger(st.session_state.ledger_data)
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_krx_data():
@@ -466,7 +494,6 @@ def calculate_cloud_indicators(df):
                 logging.debug(f"수급 폭발 계산 오류: {e}")
                 pass
             
-        # 💡 컵 앤 핸들 (Cup and Handle) 패턴 판별 알고리즘
         is_cup_and_handle = False
         try:
             if len(df) >= 60:
@@ -771,7 +798,6 @@ with tab1:
         )
         st.markdown(html_kpi, unsafe_allow_html=True)
 
-        # 💡 3분할 피라미드 매수 시나리오 토글 (기본값 False)
         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
         show_pyramid = st.toggle("📊 3분할 피라미드 매수 설계도 보기 (2:3:5 법칙)", value=False)
         
@@ -899,12 +925,8 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
-            # 💡 [버그 완벽 수정] 원본 데이터 보존을 위해 복사본(chart_df) 생성
-            chart_df = history_df.copy()
-            chart_df['date'] = pd.to_datetime(chart_df['date'])
-            monthly_profit = chart_df.groupby(chart_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
-            
-            # X축 표기용 (2026년 05월 형식)
+            history_df['date'] = pd.to_datetime(history_df['date'])
+            monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
             monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
             fig = go.Figure()
@@ -953,7 +975,6 @@ with tab2:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # 💡 [버그 완벽 수정] 훼손되지 않은 원본 history_df를 사용하여 정상 출력
             st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 15px;'>📝 최근 매도 기록 (가계부)</h4>", unsafe_allow_html=True)
             st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
                          column_config={"date": "매도일자", "ticker": "종목", "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d"), "memo": "메모"}, hide_index=True, use_container_width=True)
@@ -1012,7 +1033,7 @@ with tab2:
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>💵 보유 현금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(remaining_cash):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px;'><div class='kpi-title'>📦 투자 원금</div><div class='kpi-value-main' style='font-size: 1.4rem;'>{int(total_invested_krw):,}원</div></div>"
         f"<div class='kpi-card' style='padding: 15px; border-color: #38bdf8;'><div class='kpi-title'>💎 총 자산</div><div class='kpi-value-main' style='font-size: 1.4rem; color: #38bdf8;'>{int(total_asset_value_krw):,}원</div></div>"
-        f"<div class='kpi-card' style='padding: 15px; border-color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#f87171' if total_unrealized_profit_krw > 0 else '#60a5fa'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
+        f"<div class='kpi-card' style='padding: 15px; border-color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'><div class='kpi-title'>📈 평가 손익</div><div class='kpi-value-main' style='font-size: 1.4rem; color: {'#34d399' if total_unrealized_profit_krw > 0 else '#f87171'};'>{int(total_unrealized_profit_krw):,}원</div></div>"
         "</div>"
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
