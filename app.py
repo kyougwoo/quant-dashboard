@@ -899,17 +899,17 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         if not history_df.empty:
-            # 💡 [버그 완벽 수정 및 UI/UX 디자인 강화 - 토스/뱅크샐러드 스타일]
-            history_df['date'] = pd.to_datetime(history_df['date'])
-            monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
+            # 💡 [버그 완벽 수정] 원본 데이터 보존을 위해 복사본(chart_df) 생성
+            chart_df = history_df.copy()
+            chart_df['date'] = pd.to_datetime(chart_df['date'])
+            monthly_profit = chart_df.groupby(chart_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
             
-            # 1. X축을 예쁜 한국어 문자열로 변환하여 시간축 오해 방지
+            # X축 표기용 (2026년 05월 형식)
             monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
             fig = go.Figure()
             colors = ['#34d399' if p > 0 else '#f87171' for p in monthly_profit['profit_krw']]
             
-            # 2. 데이터가 1개일 때 막대가 화면을 꽉 채우는 '초록 벽돌' 현상 방지
             bar_width = [0.25] * len(monthly_profit) if len(monthly_profit) == 1 else None
             
             fig.add_trace(go.Bar(
@@ -917,14 +917,13 @@ with tab2:
                 y=monthly_profit['profit_krw'], 
                 marker_color=colors, 
                 text=[f"{int(p):,}원" for p in monthly_profit['profit_krw']], 
-                textposition='outside', # 텍스트를 막대 밖으로 시원하게 빼기
+                textposition='outside', 
                 textfont=dict(color='#f8fafc', size=14, family="Arial Black"),
                 width=bar_width,
-                marker_line_width=0, # 테두리 제거로 모던한 느낌
+                marker_line_width=0, 
                 hovertemplate="<b>%{x}</b><br>총 실현수익: %{text}<extra></extra>"
             ))
             
-            # 3. Y축 여유 공간 확보 (Outside 글씨가 천장에 잘리지 않도록)
             y_max = monthly_profit['profit_krw'].max() * 1.3 if monthly_profit['profit_krw'].max() > 0 else 100
             y_min = monthly_profit['profit_krw'].min() * 1.3 if monthly_profit['profit_krw'].min() < 0 else 0
             
@@ -936,13 +935,13 @@ with tab2:
                 paper_bgcolor="rgba(0,0,0,0)", 
                 plot_bgcolor="rgba(0,0,0,0)",
                 xaxis=dict(
-                    type='category', # 💡 핵심: 카테고리형 강제 지정 (절대 늘어나지 않음)
+                    type='category', 
                     showgrid=False,
                     tickfont=dict(color='#94a3b8', size=13)
                 ),
                 yaxis=dict(
                     showgrid=True,
-                    gridcolor='rgba(51, 65, 85, 0.4)', # 은은한 가로줄 추가
+                    gridcolor='rgba(51, 65, 85, 0.4)', 
                     zeroline=True,
                     zerolinecolor='rgba(255,255,255,0.2)',
                     zerolinewidth=2,
@@ -954,6 +953,7 @@ with tab2:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
+            # 💡 [버그 완벽 수정] 훼손되지 않은 원본 history_df를 사용하여 정상 출력
             st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 15px;'>📝 최근 매도 기록 (가계부)</h4>", unsafe_allow_html=True)
             st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
                          column_config={"date": "매도일자", "ticker": "종목", "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d"), "memo": "메모"}, hide_index=True, use_container_width=True)
