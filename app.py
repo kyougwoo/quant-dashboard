@@ -329,7 +329,7 @@ def get_stock_info(query):
 
 @st.cache_data(ttl=86400)
 def get_sector_map():
-    # 💡 [분류 엔진 강화] 코스피/코스닥 주요 대장주 및 헷갈리기 쉬운 종목 100개 집중 하드코딩
+    # 💡 [분류 엔진 강화] 코스피/코스닥 주요 대장주 및 헷갈리기 쉬운 종목 100개 집중 하드코딩 (삼성물산 정상화 완료)
     sector_dict = {
         # 지주/복합
         '삼성물산': '지주/복합기업', 'SK': '지주/복합기업', 'LG': '지주/복합기업', 'CJ': '지주/복합기업', '두산': '지주/복합기업', '한화': '지주/복합기업', 'LS': '지주/복합기업', 'HD현대': '지주/복합기업',
@@ -597,7 +597,7 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
-# 💡 [성능 최적화] 포트폴리오 데이터를 불러올 때 캐싱(1시간 유지)하여 속도를 10배 이상 향상
+# 💡 [성능 최적화] 포트폴리오 데이터를 불러올 때 캐싱(1분 유지)하여 실시간 체감 속도 극대화
 @st.cache_data(ttl=60)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
@@ -820,6 +820,7 @@ with tab1:
             final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
             avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
             
+            # 💡 [버그 완벽 차단] HTML 코드가 마크다운 엔진에 의해 끊기지 않도록 모두 평탄화
             html_pyramid = (
                 f"<div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>"
                 f"<h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>"
@@ -1041,16 +1042,27 @@ with tab2:
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
     
+    # 💡 [기능 업그레이드] 자산 배분 파이 차트에 '현금' 포함
+    pie_labels = []
+    pie_values = []
+    
     if not dis_df.empty:
         sector_val = dis_df.groupby('섹터')['원화평가금액'].sum().reset_index()
-        sector_val = sector_val[sector_val['원화평가금액'] > 0]
+        for _, row in sector_val.iterrows():
+            if row['원화평가금액'] > 0:
+                pie_labels.append(row['섹터'])
+                pie_values.append(row['원화평가금액'])
+                
+    if remaining_cash > 0:
+        pie_labels.append("💵 보유 현금")
+        pie_values.append(remaining_cash)
         
-        if not sector_val.empty:
-            fig_pie = go.Figure(data=[go.Pie(labels=sector_val['섹터'], values=sector_val['원화평가금액'], hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9']))])
-            fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (섹터 및 테마 분산도)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info("💡 파이 차트를 그리려면 0원 이상의 포트폴리오 자산이 필요합니다.")
+    if pie_labels and pie_values:
+        fig_pie = go.Figure(data=[go.Pie(labels=pie_labels, values=pie_values, hole=.4, textinfo='label+percent', marker=dict(colors=['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#e879f9', '#94a3b8', '#64748b']))])
+        fig_pie.update_layout(template="plotly_dark", title="📊 나의 자산 배분 현황 (현금 포함)", height=350, margin=dict(t=40, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.info("💡 상단 '초기 자본금 세팅'에 금액을 입력하시거나 주식을 매수하여 자산 배분 차트를 활성화하세요.")
 
     buy_tab, sell_tab, del_tab = st.tabs(["🛒 매수", "💰 매도", "🗑️ 오류 삭제"])
     with buy_tab:
@@ -1111,6 +1123,7 @@ with tab2:
         # --- 1. 직관적인 카드 뷰 UI (모바일/웹 친화적) ---
         def fmt_price(val, cur): return f"${val:,.2f}" if cur == 'USD' else f"{int(val):,}원"
         
+        # 💡 [버그 완벽 수정] 카드 뷰 HTML 평탄화 (마크다운 파싱 에러 방지)
         cards_html = "<div style='display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 30px;'>"
         for _, row in dis_df.iterrows():
             is_profit = row['수익률(%)'] > 0
