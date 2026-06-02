@@ -33,7 +33,7 @@ def send_telegram(text):
         print(f"🚨 텔레그램 전송 에러: {e}")
         return False
 
-# --- 2. 스마트 섹터 맵 (app.py와 동일한 강력한 분류 엔진) ---
+# --- 2. 스마트 섹터 맵 (app.py와 완벽히 동일한 강력한 분류 엔진) ---
 def get_sector_map():
     # 💡 [분류 엔진 강화] 코스피/코스닥 주요 대장주 및 헷갈리기 쉬운 종목 집중 하드코딩
     sector_dict = {
@@ -78,7 +78,7 @@ def get_sector_map():
         logging.warning(f"Sector map fetch error: {e}")
     return sector_dict
 
-# --- 3. 핵심 로직: 지표 계산 (app.py와 완벽 동기화) ---
+# --- 3. 핵심 로직: 지표 계산 (app.py와 단 1%의 오차도 없이 100% 동기화) ---
 def calculate_cloud_indicators(df):
     if df is None or df.empty or len(df) < 200: return None, {}
     df = df[~df.index.duplicated(keep='first')].dropna(subset=['Close'])
@@ -111,6 +111,16 @@ def calculate_cloud_indicators(df):
         tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
         df['ATR'] = tr.rolling(window=14).mean()
         
+        # 💡 수급 폭발 감지
+        is_vol_explosion = False
+        if 'Volume' in df.columns:
+            try:
+                prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
+                today_vol = df['Volume'].iloc[-1]
+                is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
+            except Exception as e:
+                pass
+
         # 💡 컵 앤 핸들 패턴 감지
         is_cup_and_handle = False
         try:
@@ -134,6 +144,7 @@ def calculate_cloud_indicators(df):
         try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
         except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
         
+        # 💡 [핵심 버그 수정] 클라우드 4원칙 4번째 로직(최대 거래량 종가 돌파) 완벽 복구
         indicators = {
             "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), 
             "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
@@ -142,8 +153,14 @@ def calculate_cloud_indicators(df):
             "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
             "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
             "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
+            "Volume_Explosion": is_vol_explosion,
             "Cup_and_Handle": is_cup_and_handle,
-            "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15'])}
+            "Cloud_Rules": {
+                "주가 > 200일선": bool(latest['Close'] > latest['EMA200']), 
+                "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), 
+                "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']),
+                "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price']) # 🚨 누락되었던 4원칙 완벽 복원
+            }
         }
         return df, indicators
     except Exception as e:
@@ -182,6 +199,7 @@ def run_scanner():
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
                 
+                # 💡 안전구간 필터
                 if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
                     curr_p = float(df['Close'].iloc[-1])
                     entry1 = ind['EMA5'] if curr_p > ind['EMA5'] else curr_p
@@ -189,6 +207,7 @@ def run_scanner():
                     
                     tags = []
                     if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
+                    if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
                     if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                     if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                     if ind['MACD_Cross']: tags.append("🟢골든크로스")
@@ -218,7 +237,7 @@ def run_scanner():
         msg = f"🚨 <b>[Harness 무인 스캐너 포착]</b>\n"
         msg += f"오늘 장 마감 전, VVIP 타점에 진입한 특급 종목 {len(res)}개를 발견했습니다!\n\n"
         
-        # 💡 [핵심 버그 수정] '기타분류', '제조/기타산업'은 제외하고 의미있는 1등 테마 찾기
+        # 💡 [핵심 기능] '기타분류', '제조/기타산업'은 제외하고 의미있는 1등 테마 찾기
         if not df_res.empty and 'sector' in df_res.columns:
             meaningful_df = df_res[~df_res['sector'].isin(['기타분류', '제조/기타산업'])]
             if not meaningful_df.empty:
