@@ -1,300 +1,254 @@
-import os, sys, time, json, requests, re
+import os
+import time
+import json
+import requests
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 import FinanceDataReader as fdr
-from bs4 import BeautifulSoup
-import google.generativeai as genai
-from google.cloud import firestore
-from google.oauth2 import service_account
-import textwrap
+import logging
 
-# --- 1. 환경 변수 ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# 시스템 로그
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- 1. 환경 변수 세팅 (GitHub Secrets에서 안전하게 가져옴) ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FIREBASE_JSON = os.environ.get("FIREBASE_JSON")
-USER_ID = os.environ.get("USER_ID", "vip")
 
 def send_telegram(text):
-    print("▶️ 텔레그램 전송 시도 중...")
-    base_url = "https://" + "api.telegram.org/bot"
-    url = f"{base_url}{TELEGRAM_TOKEN}/sendMessage"
+    """텔레그램 메시지 발송 함수"""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("텔레그램 토큰 또는 Chat ID가 설정되지 않았습니다.")
+        return False
     try:
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"})
-        if res.status_code == 200: print("✅ 텔레그램 메시지 발송 완료!")
-    except Exception as e: print(f"🚨 네트워크 오류: {e}")
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        if res.status_code == 200:
+            print("✅ 텔레그램 전송 성공!")
+            return True
+        else:
+            print(f"🚨 텔레그램 전송 실패: {res.text}")
+            return False
+    except Exception as e:
+        print(f"🚨 텔레그램 전송 에러: {e}")
+        return False
 
-def get_recent_news(keyword):
+# --- 2. 스마트 섹터 맵 (app.py와 동일한 강력한 분류 엔진) ---
+def get_sector_map():
+    # 💡 [분류 엔진 강화] 코스피/코스닥 주요 대장주 및 헷갈리기 쉬운 종목 집중 하드코딩
+    sector_dict = {
+        '삼성물산': '지주/복합기업', 'SK': '지주/복합기업', 'LG': '지주/복합기업', 'CJ': '지주/복합기업', '두산': '지주/복합기업', '한화': '지주/복합기업', 'LS': '지주/복합기업', 'HD현대': '지주/복합기업',
+        '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체', '리노공업': 'IT/반도체', 'HPSP': 'IT/반도체', 'ISC': 'IT/반도체', '이수페타시스': 'IT/전기전자', 'HD현대일렉트릭': 'IT/전기전자', 'LS ELECTRIC': 'IT/전기전자',
+        '현대차': '자동차/모빌리티', '기아': '자동차/모빌리티', '현대모비스': '자동차/모빌리티', 'HL만도': '자동차/모빌리티', '현대위아': '자동차/모빌리티',
+        'LG에너지솔루션': '화학/2차전지', '에코프로비엠': '화학/2차전지', '에코프로': '화학/2차전지', '에코프로머티': '화학/2차전지', 'POSCO홀딩스': '화학/2차전지', '엘앤에프': '화학/2차전지', '포스코퓨처엠': '화학/2차전지', 'LG화학': '화학/2차전지', '엔켐': '화학/2차전지', '금양': '화학/2차전지',
+        '삼성바이오로직스': '바이오/헬스케어', '셀트리온': '바이오/헬스케어', '알테오젠': '바이오/헬스케어', 'HLB': '바이오/헬스케어', '삼천당제약': '바이오/헬스케어', '유한양행': '바이오/헬스케어', '리가켐바이오': '바이오/헬스케어', '휴젤': '바이오/헬스케어', '루닛': '바이오/헬스케어',
+        'NAVER': 'SW/인터넷', '카카오': 'SW/인터넷', '엔씨소프트': 'SW/인터넷', '크래프톤': 'SW/인터넷', '펄어비스': 'SW/인터넷', '카카오페이': 'SW/인터넷',
+        'KB금융': '금융', '신한지주': '금융', '하나금융지주': '금융', '메리츠금융지주': '금융', '삼성생명': '금융', '삼성화재': '금융', '카카오뱅크': '금융', '기업은행': '금융', '우리금융지주': '금융',
+        'HD현대중공업': '기계/조선/방산', '한화오션': '기계/조선/방산', '삼성중공업': '기계/조선/방산', '한화에어로스페이스': '기계/조선/방산', 'LIG넥스원': '기계/조선/방산', '현대로템': '기계/조선/방산',
+        '하이브': '엔터/미디어', 'JYP Ent.': '엔터/미디어', '에스엠': '엔터/미디어', '와이지엔터테인먼트': '엔터/미디어', 'CJ ENM': '엔터/미디어',
+        '대한항공': '물류/운송', 'HMM': '물류/운송', '현대건설': '건설/부동산', 'GS건설': '건설/부동산', '한국전력': '유틸리티/에너지', '한국가스공사': '유틸리티/에너지', '두산에너빌리티': '유틸리티/에너지'
+    }
     try:
-        url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, timeout=5)
-        soup = BeautifulSoup(res.content, 'xml')
-        return [item.title.text for item in soup.find_all('item')[:3] if item.title]
-    except: return []
+        df = fdr.StockListing('KRX-DESC')
+        if not df.empty:
+            name_col = next((c for c in df.columns if str(c).upper() in ['NAME', '종목명', '회사명']), None)
+            sector_col = next((c for c in df.columns if any(k in str(c).upper() for k in ['SECTOR', '업종', '산업'])), None)
+            if name_col and sector_col:
+                for name, sector in zip(df[name_col], df[sector_col]):
+                    s = str(sector).strip()
+                    n = str(name).strip()
+                    if n in sector_dict: continue 
+                    if s == 'nan' or not s or s == 'None': sector_dict[n] = '기타분류'
+                    elif any(k in s for k in ['반도체', '전자부품', '컴퓨터', '통신', '방송', '디스플레이', '기기', '장비', '전기']): sector_dict[n] = 'IT/반도체'
+                    elif any(k in s for k in ['소프트웨어', '정보 서비스', '자료처리', '포털', '출판', 'IT']): sector_dict[n] = 'SW/인터넷'
+                    elif any(k in s for k in ['자동차', '모터', '운송장비', '엔진', '항공기']): sector_dict[n] = '자동차/모빌리티'
+                    elif any(k in s for k in ['의약품', '의료', '보건', '생물', '약', '진단']): sector_dict[n] = '바이오/헬스케어'
+                    elif any(k in s for k in ['금융', '보험', '은행', '신탁', '투자', '증권', '카드']): sector_dict[n] = '금융'
+                    elif any(k in s for k in ['지주']): sector_dict[n] = '지주/복합기업'
+                    elif any(k in s for k in ['화학', '플라스틱', '고무', '전지', '이차전지', '기초 화학', '소재']): sector_dict[n] = '화학/2차전지'
+                    elif any(k in s for k in ['금속', '철강', '비금속']): sector_dict[n] = '철강/금속'
+                    elif any(k in s for k in ['건설', '토목', '부동산']): sector_dict[n] = '건설/부동산'
+                    elif any(k in s for k in ['유통', '도매', '소매', '쇼핑', '음식료', '식료품', '섬유', '의복', '식품', '화장품']): sector_dict[n] = '유통/소비재'
+                    elif any(k in s for k in ['엔터', '영화', '방송', '게임', '오디오', '영상', '오락', '레저', '여행']): sector_dict[n] = '엔터/미디어'
+                    elif any(k in s for k in ['운송', '항공', '해운', '창고', '여객', '물류']): sector_dict[n] = '물류/운송'
+                    elif any(k in s for k in ['전기', '가스', '수도', '에너지', '전력', '원력']): sector_dict[n] = '유틸리티/에너지'
+                    elif any(k in s for k in ['기계', '조선', '방산', '무기']): sector_dict[n] = '기계/조선/방산'
+                    else: sector_dict[n] = '제조/기타산업'
+    except Exception as e: 
+        logging.warning(f"Sector map fetch error: {e}")
+    return sector_dict
 
-def load_krx_data():
-    try: return pd.concat([fdr.StockListing('KOSPI'), fdr.StockListing('KOSDAQ')], ignore_index=True)
-    except: return fdr.StockListing('KRX')
-
-def get_db_client():
-    if not FIREBASE_JSON: return None
-    try:
-        creds_dict = json.loads(FIREBASE_JSON, strict=False)
-        if "private_key" in creds_dict: creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
-        creds = service_account.Credentials.from_service_account_info(creds_dict)
-        return firestore.Client(credentials=creds, project=creds_dict.get("project_id"))
-    except: return None
-
-def get_ai_analysis(prompt, is_json=True):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
-    config = {"response_mime_type": "application/json"} if is_json else {}
-    res = model.generate_content(prompt, generation_config=config)
-    if is_json: return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-    return res.text.strip()
-
+# --- 3. 핵심 로직: 지표 계산 (app.py와 완벽 동기화) ---
 def calculate_cloud_indicators(df):
     if df is None or df.empty or len(df) < 200: return None, {}
-    df = df.dropna(subset=['Close'])
-    df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
-    df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
-    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    df = df[~df.index.duplicated(keep='first')].dropna(subset=['Close'])
     
-    # 볼린저 밴드 (스퀴즈 판별용)
-    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Width'] = ((df['BB_Mid'] + (df['BB_Std'] * 2)) - (df['BB_Mid'] - (df['BB_Std'] * 2))) / df['BB_Mid']
-    
-    delta = df['Close'].diff()
-    df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
-    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(window=14).mean()
-    
-    # 수급 폭발 로직
     try:
-        prev_vol_ma20 = df['Volume'].rolling(20).mean().iloc[-2]
-        today_vol = df['Volume'].iloc[-1]
-        is_vol_explosion = bool(prev_vol_ma20 > 0 and today_vol >= prev_vol_ma20 * 2.5)
-    except:
-        is_vol_explosion = False
-    
-    latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
-    try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
-    except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
-    
-    indicators = {
-        "EMA15": float(latest['EMA15']), "EMA5": float(latest['EMA5']),
-        "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
-        "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
-        "RSI": float(latest['RSI']), 
-        "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
-        "BB_Is_Squeeze": bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8),
-        "Volume_Explosion": is_vol_explosion,
-        "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
-        "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
-        "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200'])}
-    }
-    return df, indicators
-
-def get_market_top_400():
-    try:
-        kospi = fdr.StockListing('KOSPI')
-        kospi = kospi[~kospi['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)].head(200)
-        kosdaq = fdr.StockListing('KOSDAQ')
-        kosdaq = kosdaq[~kosdaq['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)].head(200)
-        sl = dict(zip(kospi['Name'], kospi['Code']))
-        sl.update(dict(zip(kosdaq['Name'], kosdaq['Code'])))
-        return sl
-    except: return {"삼성전자":"005930", "SK하이닉스":"000660", "알테오젠":"196170", "에코프로비엠":"247540"}
-
-# ==========================================
-# 🌞 [모닝 브리핑] 아침 8시 30분
-# ==========================================
-def run_morning_briefing():
-    print("🌅 [모닝 브리핑 기동]")
-    db = get_db_client()
-    if not db: return send_telegram("⚠️ [모닝 브리핑] DB 연결 실패")
-    
-    doc = db.collection('portfolios').document(USER_ID).get()
-    if not doc.exists: return send_telegram(f"⚠️ <b>{USER_ID}</b>님의 포트폴리오가 없습니다.")
-    
-    stocks = doc.to_dict().get('stocks', [])
-    if not stocks: return send_telegram(f"⚠️ <b>{USER_ID}</b>님의 포트폴리오가 비어있습니다.")
-    
-    portfolio_context = ""; portfolio_info_list = []; urgent_alerts = []
-    krx = load_krx_data()
-    
-    for s in stocks:
-        name = s['종목명']
-        try: tck = krx[krx['Name']==name]['Code'].values[0]
-        except: continue
+        df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
+        df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
+        df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        
+        df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+        df['BB_Std'] = df['Close'].rolling(window=20).std()
+        epsilon = 1e-9 # 💡 Epsilon 에러 방어 완벽 적용
+        df['BB_Upper'] = df['BB_Mid'] + (df['BB_Std'] * 2)
+        df['BB_Lower'] = df['BB_Mid'] - (df['BB_Std'] * 2)
+        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['BB_Mid'] + epsilon)
+        
+        delta = df['Close'].diff()
+        df['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean() / (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()))).fillna(50)
+        
+        df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        
+        recent_60 = df.tail(60)
+        if 'Volume' in df.columns and recent_60['Volume'].sum() > 0:
+            df['Vol_Ref_Price'] = float(recent_60.sort_values('Volume', ascending=False).iloc[0]['Close'])
+        else:
+            df['Vol_Ref_Price'] = float(df['Close'].iloc[-1])
             
-        df = fdr.DataReader(tck, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-        df, ind = calculate_cloud_indicators(df)
-        if ind:
-            price = float(df['Close'].iloc[-1])
-            prof = (price - s['매수단가']) / s['매수단가'] * 100 if s['매수단가'] > 0 else 0
-            a = float(ind['ATR'])
-            target = s['매수단가'] + (a*4)
-            fixed_stop = s['매수단가'] - (a*2)
-            
-            trailing_stop = price - (a * 2.5) 
-            is_trailing_alert = False
-            
-            if prof > 0 and price <= trailing_stop:
-                urgent_alerts.append(f"🚨 <b>[수익 보존 익절] {name}</b>: 트레일링 스탑({int(trailing_stop):,}원) 이탈! 수익 락인 요망.")
-                is_trailing_alert = True
-            elif price <= fixed_stop and s['매수단가'] > 0 and not is_trailing_alert:
-                urgent_alerts.append(f"🚨 <b>[긴급 손절] {name}</b>: 고정 손절가({int(fixed_stop):,}원) 이탈!")
-            elif price >= target and s['매수단가'] > 0:
-                urgent_alerts.append(f"🎉 <b>[목표 달성] {name}</b>: 목표가({int(target):,}원) 도달! 분할 익절 고려.")
-                
-            news_list = get_recent_news(name)
-            portfolio_context += f"- [{name}] 수익률: {prof:.1f}%, RSI={ind.get('RSI'):.1f}, 관련뉴스: {news_list}\n"
-            portfolio_info_list.append({'name': name, 'price': price, 'stop': trailing_stop if prof > 0 else fixed_stop, 'prof': prof, 'is_trailing': prof > 0})
-
-    market_news = get_recent_news("글로벌 증시 마감") + get_recent_news("한국 증시 시황")
-    prompt = f"""
-    당신은 글로벌 퀀트 전략가입니다.
-    [시장뉴스]\n{market_news}\n[포트폴리오 및 개별뉴스]\n{portfolio_context}\n
-    [형식]\n{{ "market_overview": "오늘 장 요약(3문장)", "stock_briefings": [ {{"stock": "종목명", "sentiment_score": "뉴스의 호재/악재 감성 점수(0~100점)", "strategy": "대응 전략(2문장)"}} ], "action_plan": "핵심 지침(1문장)" }}
-    """
-    try:
-        res = get_ai_analysis(prompt)
-        msg = f"🌅 <b>[Harness 모닝 브리핑]</b>\n\n"
-        if urgent_alerts:
-            msg += "⚠️ <b>[포트폴리오 긴급 액션 요망]</b>\n"
-            for alert in urgent_alerts: msg += f"{alert}\n"
-            msg += "\n"
-            
-        msg += "📊 <b>포트폴리오 상태 (트레일링 스탑 적용)</b>\n"
-        for p in portfolio_info_list: 
-            stop_type = "방어선(트레일링)" if p['is_trailing'] else "손절선(고정)"
-            msg += f"🔹 <b>{p['name']}</b> ({p['prof']:.1f}%) 👉 🛡️{stop_type} {int(p['stop']):,}원\n"
-            
-        msg += f"\n🌐 <b>시장 동향</b>\n{res.get('market_overview','')}\n\n🎯 <b>종목 전략 & AI 뉴스 감성 점수</b>\n"
-        for s in res.get('stock_briefings',[]): msg += f"- <b>{s['stock']}</b> (감성점수: {s.get('sentiment_score','-')}점) : {s['strategy']}\n"
-        send_telegram(msg)
-    except: send_telegram("🌅 [Harness 모닝 브리핑]\nAI 분석 중 오류가 발생했습니다. 포트폴리오 점검을 직접 진행해주세요.")
-
-# ==========================================
-# ⚡ [장중 스나이퍼] 오후 1시 (S급 매수 타점 전용)
-# ==========================================
-def run_intraday_sniper():
-    print("⚡ [장중 S급 스나이퍼 기동 시작]")
-    sl = get_market_top_400()
-    s_class_list = []
-    
-    for n, c in sl.items():
+        tr = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+        df['ATR'] = tr.rolling(window=14).mean()
+        
+        # 💡 컵 앤 핸들 패턴 감지
+        is_cup_and_handle = False
         try:
-            df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
-            df, ind = calculate_cloud_indicators(df)
-            if ind:
-                sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
+            if len(df) >= 60:
+                high_vals = recent_60['High'].values
+                low_vals = recent_60['Low'].values
+                close_vals = recent_60['Close'].values
+                cup_high_idx = int(np.argmax(high_vals))
+                cup_high = float(high_vals[cup_high_idx])
                 
-                # 🏆 S급 판단 로직: 월봉10선 위 + 스퀴즈(응축) + MACD상승 + 클라우드 2개 이상
-                is_squeeze = ind.get('BB_Is_Squeeze', False)
-                is_macd_up = ind.get('MACD_Cross', False)
-                is_safe = ind.get('Is_Above_Monthly_EMA10', False)
-                is_vol_exp = ind.get('Volume_Explosion', False)
-                
-                if sc >= 2 and is_safe and is_squeeze and is_macd_up:
-                    p = float(df['Close'].iloc[-1])
-                    a = float(ind['ATR'])
-                    
-                    tags = []
-                    if is_vol_exp: tags.append("💥수급폭발")
-                    if ind['MACD_Early_Entry']: tags.append("🚀선취매")
-                    else: tags.append("🟢골든크로스")
-                    
-                    s_class_list.append({
-                        "name": n, "price": p, "target": p + (a*4), "stop": p - (a*2), 
-                        "rsi": ind.get('RSI', 50), "tags": " + ".join(tags)
-                    })
+                if cup_high_idx < 45:
+                    cup_low = float(np.min(low_vals[cup_high_idx:]))
+                    depth = (cup_high - cup_low) / cup_high
+                    if 0.10 <= depth <= 0.50:
+                        current_p = float(close_vals[-1])
+                        if cup_high * 0.90 <= current_p <= cup_high * 1.05:
+                            is_cup_and_handle = True
         except: pass
         
-    if s_class_list:
-        msg = "⚡ <b>[장중 S급 스나이퍼 포착]</b> ⚡\n\n"
-        msg += "🏆 <b>'폭발 직전의 스프링' (스퀴즈 + MACD 상승)</b> 조건이 일치하는 특급 종목이 장중에 포착되었습니다!\n\n"
-        for r in s_class_list:
-            msg += f"🔥 <b>{r['name']}</b> ({r['tags']})\n"
-            msg += f" └ 📊 RSI: {r['rsi']:.1f} | BB: 🚨 스퀴즈\n"
-            msg += f" └ 💵 현재가: {int(r['price']):,}원\n"
-            msg += f" └ 🎯 목표가: {int(r['target']):,}원\n"
-            msg += f" └ 🛡️ 손절가: {int(r['stop']):,}원\n\n"
-        msg += "⚠️ 장 마감 전 단기 시세 분출 가능성이 높습니다. 대시보드를 확인하세요!"
-        send_telegram(msg)
-    else:
-        # 봇이 죽은게 아니라 포착된게 없음을 알림
-        send_telegram("⚡ [장중 스캐너] 현재 시간 기준 S급(스퀴즈+MACD상승) 매수 타점 종목이 없습니다.")
+        latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
+        try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
+        except: current_monthly_ema10 = float(df['EMA200'].iloc[-1])
+        
+        indicators = {
+            "EMA5": float(latest['EMA5']), "EMA15": float(latest['EMA15']), "EMA200": float(latest['EMA200']), 
+            "ATR": float(latest['ATR']) if not pd.isna(latest['ATR']) else float(latest['Close']*0.05),
+            "BB_Is_Squeeze": bool(latest['BB_Width'] < df['BB_Width'].tail(20).mean() * 0.8),
+            "Monthly_EMA10": current_monthly_ema10, "Is_Above_Monthly_EMA10": bool(latest['Close'] > current_monthly_ema10),
+            "RSI": float(latest['RSI']), "MACD_Cross": bool(latest['MACD'] > latest['MACD_Signal']),
+            "MACD_Early_Entry": (prev['MACD_Hist'] < 0) and (latest['MACD_Hist'] > prev['MACD_Hist']) and (prev['MACD_Hist'] > prev2['MACD_Hist']),
+            "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
+            "Cup_and_Handle": is_cup_and_handle,
+            "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15'])}
+        }
+        return df, indicators
+    except Exception as e:
+        print(f"Indicator calculation error: {e}")
+        return None, {}
 
-# ==========================================
-# 🔍 [마감 스크리너] 오후 4시 (전체 스캔 요약)
-# ==========================================
-def run_afternoon_screener():
-    print("🔍 [마감 타점 스크리너 기동 시작]")
-    sl = get_market_top_400()
-    res_list = []
+def get_market_top_stocks():
+    """코스피/코스닥 시총 상위 각 150개 추출 (서버 부하 방지용)"""
+    try:
+        kospi = fdr.StockListing('KOSPI')
+        kospi = kospi[~kospi['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
+        
+        kosdaq = fdr.StockListing('KOSDAQ')
+        kosdaq = kosdaq[~kosdaq['Name'].str.contains('스팩|제[0-9]+호|ETN|ETF|KODEX|TIGER|KINDEX|KBSTAR', na=False)]
+        
+        target_stocks = dict(zip(kospi.head(150)['Name'], kospi.head(150)['Code']))
+        target_stocks.update(dict(zip(kosdaq.head(150)['Name'], kosdaq.head(150)['Code'])))
+        return target_stocks
+    except Exception as e:
+        print(f"리스트 로드 실패: {e}")
+        return {"삼성전자":"005930", "SK하이닉스":"000660"}
+
+# --- 4. 메인 자동화 스캐너 로직 ---
+def run_scanner():
+    print("🚀 [클라우드 퀀트 무인 봇] 스크리닝을 시작합니다...")
+    stocks = get_market_top_stocks()
+    sector_map = get_sector_map()
+    res = []
     
-    for n, c in sl.items():
+    total = len(stocks)
+    for i, (name, code) in enumerate(stocks.items()):
         try:
-            df = fdr.DataReader(c, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
+            df = fdr.DataReader(code, (datetime.today()-timedelta(days=700)).strftime('%Y-%m-%d'), datetime.today().strftime('%Y-%m-%d'))
             df, ind = calculate_cloud_indicators(df)
+            
             if ind:
                 sc = sum(1 for v in ind["Cloud_Rules"].values() if v)
+                
                 if sc >= 2 and ind.get("Is_Above_Monthly_EMA10"):
-                    p = float(df['Close'].iloc[-1])
-                    a = float(ind['ATR'])
+                    curr_p = float(df['Close'].iloc[-1])
+                    entry1 = ind['EMA5'] if curr_p > ind['EMA5'] else curr_p
+                    a = ind['ATR']
                     
                     tags = []
-                    if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
+                    if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
                     if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                     if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                     if ind['MACD_Cross']: tags.append("🟢골든크로스")
+                    if ind['BB_Is_Squeeze']: tags.append("🚨스퀴즈")
                     
-                    res_list.append({
-                        "name": n, 
-                        "sig": "🔥 강력매수" if ind.get('MACD_Cross') or ind.get('MACD_Early_Entry') else "👍 분할매수", 
-                        "tags": " + ".join(tags) if tags else "추세추종",
-                        "price": p,
-                        "target": p + (a * 4),
-                        "stop": p - (a * 2)
-                    })
-        except: pass
+                    if tags:
+                        res.append({
+                            "name": name,
+                            "sector": sector_map.get(name, "기타분류"),
+                            "price": curr_p,
+                            "entry": entry1,
+                            "target": entry1 + (a*4),
+                            "stop": entry1 - (a*2),
+                            "tags": " + ".join(tags)
+                        })
+        except Exception as e:
+            pass 
         
-    if not res_list:
-        send_telegram("🚀 <b>[클라우드 마감 스크리너]</b>\n\n월봉 10선 위 안전한 매수 타점 종목이 없습니다.")
-        return
-
-    # 종목이 너무 많으면 강력매수(시그널) 위주로 상위 15개만 컷팅
-    res_list.sort(key=lambda x: 1 if "강력" in x['sig'] else 0, reverse=True)
-    top_res = res_list[:15]
+        if (i+1) % 50 == 0:
+            print(f"진행 상황: {i+1} / {total} 스캔 완료...")
+            
+    print(f"✅ 스캔 완료. 총 {len(res)}개 특급 타점 발견!")
     
-    msg = f"🚀 <b>[클라우드 마감 스크리너]</b>\n\n총 {len(res_list)}개 타점 종목 발견! (상위 15개 요약)\n\n"
-    for r in top_res: 
-        msg += f"<b>{r['name']}</b> ({r['sig']})\n"
-        msg += f" └ ✨ 포착원인: {r['tags']}\n"
-        msg += f" └ 💵 매수대기: {int(r['price']):,}원\n"
-        msg += f" └ 🎯 목표: {int(r['target']):,} / 🛡️ 손절: {int(r['stop']):,}\n\n"
+    # 💡 텔레그램 메시지 조립 (테마 쏠림 감지 엔진 포함)
+    if res:
+        df_res = pd.DataFrame(res)
+        msg = f"🚨 <b>[Harness 무인 스캐너 포착]</b>\n"
+        msg += f"오늘 장 마감 전, VVIP 타점에 진입한 특급 종목 {len(res)}개를 발견했습니다!\n\n"
         
-    send_telegram(msg)
-
-# ==========================================
-# 🚦 [메인 라우터] GitHub Actions 인자값 분석
-# ==========================================
-if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "afternoon"
-    print(f"🚀 봇 실행 모드: {mode}")
-    
-    if mode == "morning":
-        run_morning_briefing()
-    elif mode == "intraday":
-        run_intraday_sniper()
-    elif mode == "afternoon":
-        run_afternoon_screener()
+        # 💡 [핵심 버그 수정] '기타분류', '제조/기타산업'은 제외하고 의미있는 1등 테마 찾기
+        if not df_res.empty and 'sector' in df_res.columns:
+            meaningful_df = df_res[~df_res['sector'].isin(['기타분류', '제조/기타산업'])]
+            if not meaningful_df.empty:
+                sector_counts = meaningful_df['sector'].value_counts()
+                if not sector_counts.empty:
+                    top_sector = sector_counts.index[0]
+                    top_count = sector_counts.iloc[0]
+                    if top_count >= 2:
+                        msg += f"🔥 <b>[AI 수급 쏠림 감지]</b>\n"
+                        msg += f"포착된 종목 중 {top_count}개가 <b>[{top_sector}]</b> 섹터입니다. 메이저 수급 유입이 의심되니 해당 섹터 관련주를 1순위로 확인하세요!\n\n"
+                        msg += "-----------------------------------\n\n"
+        
+        for r in res:
+            msg += f"🎯 <b>{r['name']}</b> ({r['tags']})\n"
+            msg += f" └ 💵 현재가: {int(r['price']):,}원\n"
+            msg += f" └ 📥 1차매수(대기): {int(r['entry']):,}원\n"
+            msg += f" └ 🏁 목표가: {int(r['target']):,} / 🛡️ 손절: {int(r['stop']):,}\n\n"
+        
+        msg += "자세한 차트 분석은 클라우드 퀀트 PRO 대시보드에서 확인하세요!"
+        
+        # 길이가 너무 길면 분할 전송 (안전 장치)
+        if len(msg) > 3800:
+            chunks = [msg[i:i+3800] for i in range(0, len(msg), 3800)]
+            for chunk in chunks:
+                send_telegram(chunk)
+                time.sleep(1)
+        else:
+            send_telegram(msg)
     else:
-        print("Usage: python bot.py [morning|intraday|afternoon]")
+        send_telegram("💡 <b>[Harness 무인 스캐너]</b>\n오늘 장에는 안전한 S급 타점(월봉 10선 위) 종목이 없습니다. 현금 비중을 유지하며 관망하세요.")
+
+if __name__ == "__main__":
+    run_scanner()
