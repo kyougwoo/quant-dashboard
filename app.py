@@ -984,9 +984,36 @@ with tab2:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 15px;'>📝 최근 매도 기록 (가계부)</h4>", unsafe_allow_html=True)
-            st.dataframe(history_df.sort_values('date', ascending=False).head(5)[['date', 'ticker', 'profit_krw', 'memo']], 
-                         column_config={"date": "매도일자", "ticker": "종목", "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d"), "memo": "메모"}, hide_index=True, use_container_width=True)
+            # 💡 [가계부 편집 엔진 탑재] st.data_editor를 통한 완전한 CRUD(수정/삭제) 구현
+            st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 5px;'>📝 상세 매도 기록 (가계부 직접 수정)</h4>", unsafe_allow_html=True)
+            st.markdown("<p style='font-size: 0.85em; color: #94a3b8; margin-bottom: 15px;'>💡 표의 셀을 더블클릭하여 오기재된 금액이나 종목명을 직접 수정할 수 있습니다. (행 좌측 선택 후 휴지통 아이콘/Delete 키 누르면 삭제)</p>", unsafe_allow_html=True)
+            
+            raw_history_df = pd.DataFrame(ledger_data.get('history', []))
+            if not raw_history_df.empty:
+                raw_history_df = raw_history_df.sort_values('date', ascending=False)
+                edited_history = st.data_editor(
+                    raw_history_df,
+                    column_config={
+                        "id": None, # 고유 ID는 화면에 안보이게 숨김
+                        "date": st.column_config.TextColumn("매도일자 (YYYY-MM-DD HH:MM)", required=True),
+                        "ticker": st.column_config.TextColumn("종목", required=True),
+                        "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d", required=True),
+                        "memo": st.column_config.TextColumn("메모")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="dynamic"
+                )
+                
+                # 변경사항 감지 후 즉시 DB 저장 및 새로고침
+                if str(raw_history_df.to_dict('records')) != str(edited_history.to_dict('records')):
+                    updated_records = edited_history.to_dict('records')
+                    for rec in updated_records:
+                        if pd.isna(rec.get('id')): # 새로 추가된 행이 있다면 자동 ID 발급
+                            rec['id'] = f"manual_{time.time()}"
+                    ledger_data['history'] = updated_records
+                    save_ledger(ledger_data)
+                    st.rerun()
         else:
             st.info("아직 수익 실현 기록이 없습니다. 첫 매도를 통해 가계부를 채워보세요!")
             
