@@ -990,6 +990,28 @@ with tab2:
         else:
             st.info("아직 수익 실현 기록이 없습니다. 첫 매도를 통해 가계부를 채워보세요!")
             
+        with st.expander("🛠️ 누락된 과거 매도 기록 수동 복구", expanded=False):
+            with st.form("manual_history_form"):
+                st.markdown("<p style='font-size:0.9em; color:#94a3b8;'>서버 재시작으로 날아간 기록을 직접 복구할 수 있습니다.</p>", unsafe_allow_html=True)
+                mc1, mc2, mc3 = st.columns(3)
+                with mc1: m_date = st.date_input("매도 일자", datetime.today())
+                with mc2: m_ticker = st.text_input("종목명", "성호전자")
+                with mc3: m_profit = st.number_input("실현 수익금(원)", value=0, step=10000)
+                m_memo = st.text_input("메모 (예: 100주 익절)", "수동 복구")
+                
+                if st.form_submit_button("💾 기록 복구 및 저장", use_container_width=True):
+                    if m_ticker:
+                        new_record = {
+                            'id': f"manual_{time.time()}",
+                            'date': m_date.strftime('%Y-%m-%d 15:30:00'),
+                            'ticker': m_ticker,
+                            'profit_krw': float(m_profit),
+                            'memo': m_memo
+                        }
+                        ledger_data['history'].append(new_record)
+                        save_ledger(ledger_data)
+                        st.rerun()
+            
     st.markdown("---")
     
     with st.expander("💰 초기 자본금 세팅 (원화 기준)", expanded=(p_data['initial_capital'] == 0)):
