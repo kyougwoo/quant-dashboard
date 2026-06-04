@@ -707,7 +707,7 @@ with tab1:
                 if p2[0] > p1[0]:
                     slope_h = (p2[1] - p1[1]) / (p2[0] - p1[0])
                     end_y_h = p2[1] + slope_h * ((len(display_df)-1) - p2[0])
-                    fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추세)'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추 추세)'), row=1, col=1)
                 
             if len(valleys) >= 2:
                 v1, v2 = valleys[-2], valleys[-1]
@@ -928,8 +928,13 @@ with tab2:
     
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
+        
+        # 💡 [버그 완벽 차단] 날짜(date) 데이터가 비어있거나 형식이 잘못된 옛날 찌꺼기 데이터가 섞여 있을 때 발생하는 ValueError 방어
+        if not history_df.empty and 'date' in history_df.columns:
+            history_df['date'] = pd.to_datetime(history_df['date'], errors='coerce')
+            history_df = history_df.dropna(subset=['date'])
+
         if not history_df.empty:
-            history_df['date'] = pd.to_datetime(history_df['date'])
             monthly_profit = history_df.groupby(history_df['date'].dt.to_period('M'))['profit_krw'].sum().reset_index()
             monthly_profit['date_str'] = monthly_profit['date'].dt.strftime('%Y년 %m월')
             
