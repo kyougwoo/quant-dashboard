@@ -707,7 +707,7 @@ with tab1:
                 if p2[0] > p1[0]:
                     slope_h = (p2[1] - p1[1]) / (p2[0] - p1[0])
                     end_y_h = p2[1] + slope_h * ((len(display_df)-1) - p2[0])
-                    fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추 추세)'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=[dates[p1[0]], dates[-1]], y=[p1[1], end_y_h], mode='lines', line=dict(color='rgba(248, 113, 113, 0.8)', width=2, dash='dot'), name='저항선 (추세)'), row=1, col=1)
                 
             if len(valleys) >= 2:
                 v1, v2 = valleys[-2], valleys[-1]
@@ -759,7 +759,7 @@ with tab1:
         fig.add_hrect(y0=0, y1=30, fillcolor="rgba(56, 189, 248, 0.15)", layer="below", line_width=0, row=4, col=1)
 
         # ----------------------------------------
-        # 레이아웃 세부 조정
+        # 레이아웃 세부 조정 및 💡 툴팁(Hover) 포맷팅 튜닝
         # ----------------------------------------
         fig.update_layout(
             template="plotly_dark", 
@@ -772,6 +772,19 @@ with tab1:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
+        # 💡 [디테일 완벽 튜닝] 차트 툴팁(Hover) 및 Y축 금액/수치 포맷팅 (k, M 단위를 알아보기 쉽게 원/달러 단위로 변경)
+        is_us_stock = not str(ticker).isdigit() if ticker else False
+        
+        # 1층: 주가 및 이평선들 (한국 주식은 콤마+원, 미국 주식은 달러+소수점)
+        fig.update_yaxes(tickformat="$,.2f" if is_us_stock else ",.0f", ticksuffix="" if is_us_stock else "원", row=1, col=1)
+        
+        # 2층: 거래량 (툴팁에서 k, M 대신 정확한 콤마 단위의 숫자로 표시)
+        fig.update_yaxes(hoverformat=",.0f", row=2, col=1)
+        
+        # 3, 4층: 보조지표 (소수점 자릿수 깔끔하게 제한)
+        fig.update_yaxes(hoverformat=",.2f", row=3, col=1)
+        fig.update_yaxes(hoverformat=",.1f", row=4, col=1)
+
         fig.update_annotations(font_size=12, font_color="#94a3b8")
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
