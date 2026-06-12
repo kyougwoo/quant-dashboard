@@ -786,7 +786,20 @@ with tab1:
         fig.update_yaxes(hoverformat=",.1f", row=4, col=1)
 
         fig.update_annotations(font_size=12, font_color="#94a3b8")
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
+        
+        # 💡 [날짜 포맷팅 완벽 튜닝] 미국식 날짜(Jun 12, 2026)를 한국식(2026년 06월 12일)으로 전면 교체
+        fig.update_xaxes(
+            showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False,
+            hoverformat="%Y년 %m월 %d일",
+            tickformatstops=[
+                dict(dtickrange=[None, 86400000], value="%m월 %d일 %H:%M"),
+                dict(dtickrange=[86400000, 604800000], value="%Y년 %m월 %d일"),
+                dict(dtickrange=[604800000, "M1"], value="%Y년 %m월 %d일"),
+                dict(dtickrange=["M1", "M12"], value="%Y년 %m월"),
+                dict(dtickrange=["M12", None], value="%Y년")
+            ]
+        )
+        
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False)
         fig.update_yaxes(range=[0, 100], row=4, col=1)
 
