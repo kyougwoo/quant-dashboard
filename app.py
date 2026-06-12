@@ -546,6 +546,7 @@ def calculate_cloud_indicators(df):
             "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
             "Volume_Explosion": is_vol_explosion,
             "Cup_and_Handle": is_cup_and_handle,
+            "Trend_Join": bool(latest['Close'] > prev['High']), # 💡 [신규 추가] 전일 고가 돌파 (Trend Join Long)
             "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
         }
         return df, indicators
@@ -1408,6 +1409,7 @@ with tab3:
                             tags = []
                             if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
+                            if ind.get('Trend_Join'): tags.append("📈고가돌파") # 💡 [신규 추가] 돌파 태그 삽입
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
@@ -1509,15 +1511,17 @@ with tab3:
         st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
         
         filter_mode = st.radio("전략 선택", 
-            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
+            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📈 전일 고가 돌파 (Trend Join)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
             horizontal=True, label_visibility="collapsed"
-        )
+        ) # 💡 [신규 추가] 라디오 버튼에 '전일 고가 돌파' 옵션 추가
         
         num_cols = df_all.select_dtypes(include=[np.number]).columns
         df_all[num_cols] = df_all[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
         
         if "S급 돌파" in filter_mode:
             df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
+        elif "전일 고가 돌파" in filter_mode: # 💡 [신규 추가] 필터링 조건 추가
+            df_view = df_all[df_all['포착원인'].str.contains('고가돌파')]
         elif "컵 앤 핸들" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('컵앤핸들')]
         elif "낙폭과대" in filter_mode:
