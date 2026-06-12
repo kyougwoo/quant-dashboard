@@ -767,7 +767,7 @@ with tab1:
             plot_bgcolor="rgba(0,0,0,0)", 
             xaxis_rangeslider_visible=False, 
             height=900, 
-            margin=dict(l=10, r=60, t=40, b=20), 
+            margin=dict(l=10, r=120, t=40, b=20), # 💡 우측 여백(r)을 60에서 120으로 대폭 늘려 현재가 텍스트 짤림 현상 완벽 해결!
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
