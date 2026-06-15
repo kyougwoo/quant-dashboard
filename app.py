@@ -216,7 +216,6 @@ def save_portfolio(data):
             pass
     with open(f'portfolio_data_{st.session_state.user_id}.json', 'w') as f: json.dump(data, f)
 
-# 💡 [버그 완벽 차단] 로컬 파일(json)에서도 가계부 데이터를 안전하게 불러오도록 기능 복구
 def load_ledger():
     default_data = {'history': []}
     if db:
@@ -236,7 +235,6 @@ def load_ledger():
             pass
     return default_data
 
-# 💡 [버그 완벽 차단] 로컬 파일(json)에도 가계부 데이터를 저장하여 휘발성 증발 방지
 def save_ledger(data):
     if db:
         try: 
@@ -251,18 +249,16 @@ def save_ledger(data):
 if 'p_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.p_data, st.session_state.current_user = load_portfolio(), st.session_state.user_id
 
-# 💡 [긴급 특수 복구 엔진] 날아갔던 대표님의 KORU 수익 기록을 스크린샷 데이터 기반으로 자동 복구합니다!
 if 'ledger_data' not in st.session_state or st.session_state.get('current_user') != st.session_state.user_id:
     st.session_state.ledger_data = load_ledger()
     
     file_name = f"ledger_data_{st.session_state.get('user_id', 'guest')}.json"
     if not os.path.exists(file_name) and len(st.session_state.ledger_data.get('history', [])) == 0:
-        # 단 한 번, 가계부가 완전히 비어있을 때 KORU 내역을 되살립니다.
         st.session_state.ledger_data['history'].append({
             'id': 'recovery_koru_1',
             'date': '2026-05-29 01:39:00',
             'ticker': 'KORU',
-            'profit_krw': 47145781.0, # 스크린샷 기준 정확한 수익금 복원
+            'profit_krw': 47145781.0,
             'memo': '30.0주 매도'
         })
         save_ledger(st.session_state.ledger_data)
@@ -329,27 +325,16 @@ def get_stock_info(query):
 
 @st.cache_data(ttl=86400)
 def get_sector_map():
-    # 💡 [분류 엔진 강화] 코스피/코스닥 주요 대장주 및 헷갈리기 쉬운 종목 100개 집중 하드코딩 (삼성물산 정상화 완료)
     sector_dict = {
-        # 지주/복합
         '삼성물산': '지주/복합기업', 'SK': '지주/복합기업', 'LG': '지주/복합기업', 'CJ': '지주/복합기업', '두산': '지주/복합기업', '한화': '지주/복합기업', 'LS': '지주/복합기업', 'HD현대': '지주/복합기업',
-        # IT/반도체
         '삼성전자': 'IT/반도체', 'SK하이닉스': 'IT/반도체', '한미반도체': 'IT/반도체', '리노공업': 'IT/반도체', 'HPSP': 'IT/반도체', 'ISC': 'IT/반도체', '이수페타시스': 'IT/전기전자', 'HD현대일렉트릭': 'IT/전기전자', 'LS ELECTRIC': 'IT/전기전자',
-        # 자동차/모빌리티
         '현대차': '자동차/모빌리티', '기아': '자동차/모빌리티', '현대모비스': '자동차/모빌리티', 'HL만도': '자동차/모빌리티', '현대위아': '자동차/모빌리티',
-        # 화학/2차전지
         'LG에너지솔루션': '화학/2차전지', '에코프로비엠': '화학/2차전지', '에코프로': '화학/2차전지', '에코프로머티': '화학/2차전지', 'POSCO홀딩스': '화학/2차전지', '엘앤에프': '화학/2차전지', '포스코퓨처엠': '화학/2차전지', 'LG화학': '화학/2차전지', '엔켐': '화학/2차전지', '금양': '화학/2차전지',
-        # 바이오/헬스케어
         '삼성바이오로직스': '바이오/헬스케어', '셀트리온': '바이오/헬스케어', '알테오젠': '바이오/헬스케어', 'HLB': '바이오/헬스케어', '삼천당제약': '바이오/헬스케어', '유한양행': '바이오/헬스케어', '리가켐바이오': '바이오/헬스케어', '휴젤': '바이오/헬스케어', '루닛': '바이오/헬스케어',
-        # SW/인터넷
         'NAVER': 'SW/인터넷', '카카오': 'SW/인터넷', '엔씨소프트': 'SW/인터넷', '크래프톤': 'SW/인터넷', '펄어비스': 'SW/인터넷', '카카오페이': 'SW/인터넷',
-        # 금융
         'KB금융': '금융', '신한지주': '금융', '하나금융지주': '금융', '메리츠금융지주': '금융', '삼성생명': '금융', '삼성화재': '금융', '카카오뱅크': '금융', '기업은행': '금융', '우리금융지주': '금융',
-        # 기계/조선/방산
         'HD현대중공업': '기계/조선/방산', '한화오션': '기계/조선/방산', '삼성중공업': '기계/조선/방산', '한화에어로스페이스': '기계/조선/방산', 'LIG넥스원': '기계/조선/방산', '현대로템': '기계/조선/방산',
-        # 엔터/미디어
         '하이브': '엔터/미디어', 'JYP Ent.': '엔터/미디어', '에스엠': '엔터/미디어', '와이지엔터테인먼트': '엔터/미디어', 'CJ ENM': '엔터/미디어',
-        # 기타
         '대한항공': '물류/운송', 'HMM': '물류/운송', '현대건설': '건설/부동산', 'GS건설': '건설/부동산', '한국전력': '유틸리티/에너지', '한국가스공사': '유틸리티/에너지', '두산에너빌리티': '유틸리티/에너지'
     }
     try:
@@ -470,6 +455,21 @@ def calculate_cloud_indicators(df):
     if len(df) < 200: return None, {}
     
     try:
+        # 💡 [신규 탑재] 하이킨아시 (Heikin-Ashi) 캔들 백그라운드 계산 엔진
+        ha_close = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4
+        ha_open = [(df['Open'].iloc[0] + df['Close'].iloc[0]) / 2]
+        for i in range(1, len(df)):
+            ha_open.append((ha_open[i-1] + ha_close.iloc[i-1]) / 2)
+            
+        df['HA_Open'] = ha_open
+        df['HA_Close'] = ha_close
+        df['HA_High'] = df[['High', 'HA_Open', 'HA_Close']].max(axis=1)
+        df['HA_Low'] = df[['Low', 'HA_Open', 'HA_Close']].min(axis=1)
+        
+        # 💡 [신규 탑재] 래리 윌리엄스 변동성 돌파 타겟가 계산
+        df['Range'] = df['High'].shift(1) - df['Low'].shift(1)
+        df['Larry_Target'] = df['Open'] + (df['Range'] * 0.5)
+
         df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
         df['EMA15'] = df['Close'].ewm(span=15, adjust=False).mean()
         df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
@@ -531,6 +531,18 @@ def calculate_cloud_indicators(df):
             pass
             
         latest, prev, prev2 = df.iloc[-1], df.iloc[-2], df.iloc[-3]
+        
+        # 💡 [신규 탑재] 하이킨아시 '스크류바(강력 매수)' 판별 로직
+        is_ha_screw_bar = False
+        ha_body = latest['HA_Close'] - latest['HA_Open']
+        ha_range = latest['HA_High'] - latest['HA_Low']
+        
+        if ha_body > 0 and ha_range > 0: # 양봉일 때
+            lower_shadow = latest['HA_Open'] - latest['HA_Low']
+            if lower_shadow <= (ha_range * 0.05): # 아래꼬리가 거의 없는 상태 (전체의 5% 이하)
+                if ha_body / ha_range >= 0.5: # 몸통이 전체 캔들의 50% 이상을 꽉 채울 때 (스크류바 완성)
+                    is_ha_screw_bar = True
+
         try: current_monthly_ema10 = float((df['Close'].resample('ME').last() if hasattr(df['Close'].resample('ME'), 'last') else df['Close'].resample('M').last()).ewm(span=10, adjust=False).mean().iloc[-1])
         except Exception as e: 
             logging.debug(f"월봉 변환 오류, 200일선 대체: {e}")
@@ -547,6 +559,7 @@ def calculate_cloud_indicators(df):
             "Volume_Explosion": is_vol_explosion,
             "Cup_and_Handle": is_cup_and_handle,
             "Trend_Join": bool(latest['Close'] > prev['High']),
+            "HA_ScrewBar": is_ha_screw_bar, # 💡 [신규 추가] 하이킨아시 스크류바 결과 저장
             "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
         }
         return df, indicators
@@ -598,7 +611,6 @@ def send_telegram_message(token, chat_id, text):
         logging.error(f"Telegram Exception: {e}")
         return False
 
-# 💡 [성능 최적화] 포트폴리오 데이터를 불러올 때 캐싱(1분 유지)하여 실시간 체감 속도 극대화
 @st.cache_data(ttl=60)
 def get_portfolio_stock_data(ticker):
     if not ticker: return 0.0, 0.0
@@ -645,8 +657,12 @@ with tab1:
 
     st.markdown(f"<h3 style='color: #f8fafc;'>📊 {actual_name} <span style='font-size: 0.6em; color: #64748b;'>{ticker}</span></h3>", unsafe_allow_html=True)
     
+    # 💡 [신규 탑재] 하이킨아시 뷰 모드 토글 버튼 추가
+    col_opt1, col_opt2 = st.columns(2)
+    with col_opt1: show_trendline = st.toggle("📐 AI 자동 추세선 작도 켜기", value=True)
+    with col_opt2: show_heikin_ashi = st.toggle("🕯️ 하이킨아시 뷰 모드 켜기 (노이즈 필터링)", value=False)
+    
     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
-    show_trendline = st.toggle("📐 AI 자동 추세선 작도 켜기 (삼각수렴, 지지/저항선 가이드)", value=True)
     
     with st.spinner("터미널 데이터 동기화 중..."):
         try: 
@@ -678,17 +694,42 @@ with tab1:
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Upper'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), name='BB 상단', showlegend=False), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['BB_Lower'], mode='lines', line=dict(color='rgba(148, 163, 184, 0.2)', width=1), fill='tonexty', fillcolor='rgba(148, 163, 184, 0.05)', name='BB 영역', showlegend=False), row=1, col=1)
         
+        # 💡 [신규 탑재] 토글 상태에 따라 일반 캔들 또는 하이킨아시 캔들 그리기
+        if show_heikin_ashi:
+            c_open, c_high, c_low, c_close = display_df['HA_Open'], display_df['HA_High'], display_df['HA_Low'], display_df['HA_Close']
+            c_name = "주가 (하이킨아시)"
+        else:
+            c_open, c_high, c_low, c_close = display_df['Open'], display_df['High'], display_df['Low'], display_df['Close']
+            c_name = "주가"
+
         fig.add_trace(go.Candlestick(
-            x=display_df.index, open=display_df['Open'], high=display_df['High'], low=display_df['Low'], close=display_df['Close'], 
-            name="주가", increasing_line_color=color_up, decreasing_line_color=color_down, increasing_fillcolor=color_up, decreasing_fillcolor=color_down
+            x=display_df.index, open=c_open, high=c_high, low=c_low, close=c_close, 
+            name=c_name, increasing_line_color=color_up, decreasing_line_color=color_down, increasing_fillcolor=color_up, decreasing_fillcolor=color_down
         ), row=1, col=1)
         
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA5'], mode='lines', line=dict(color='#fcd34d', width=1.5), name='5일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA15'], mode='lines', line=dict(color='#c084fc', width=1.5), name='15일선'), row=1, col=1)
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['EMA200'], mode='lines', line=dict(color='#9ca3af', width=2, dash='dot'), name='200일선'), row=1, col=1)
-        
         fig.add_trace(go.Scatter(x=display_df.index, y=display_df['Vol_Ref_Price'], mode='lines', line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5, dash='dash'), name='최대 매물대'), row=1, col=1)
         
+        # ----------------------------------------
+        # ⚡ [신규 탑재] 래리 윌리엄스 변동성 돌파 마커 엔진
+        # ----------------------------------------
+        larry_x = []
+        larry_y = []
+        for i in range(1, len(display_df)):
+            if not pd.isna(display_df['EMA200'].iloc[i]) and display_df['Close'].iloc[i] > display_df['EMA200'].iloc[i]:
+                if display_df['High'].iloc[i] >= display_df['Larry_Target'].iloc[i]:
+                    larry_x.append(display_df.index[i])
+                    larry_y.append(display_df['Larry_Target'].iloc[i])
+                    
+        if larry_x:
+            fig.add_trace(go.Scatter(
+                x=larry_x, y=larry_y, mode='markers', 
+                marker=dict(symbol='star-triangle-up', size=16, color='#fbbf24', line=dict(width=1, color='#0f172a')), 
+                name='⚡ 래리 돌파'
+            ), row=1, col=1)
+
         if show_trendline and len(display_df) > 20:
             order = 5
             highs = display_df['High'].values
@@ -937,8 +978,7 @@ with tab1:
 with tab2:
     p_data = st.session_state.p_data
     
-    # 💡 [신규 탑재] 자동 평단가 병합 엔진 (물타기/불타기 데이터 클렌징)
-    # 흩어져 있는 동일 종목 데이터를 하나로 합치고 평균 단가와 총 수량을 다시 계산합니다.
+    # 💡 자동 평단가 병합 엔진 (물타기/불타기 데이터 클렌징)
     consolidated_stocks = {}
     needs_save = False
     
@@ -948,12 +988,11 @@ with tab2:
             old_p = consolidated_stocks[name]['매수단가']
             old_q = consolidated_stocks[name]['수량']
             new_q = old_q + item['수량']
-            # 가중 평균으로 평단가 계산: ((기존단가*기존수량) + (추가단가*추가수량)) / 총수량
             new_p = ((old_p * old_q) + (item['매수단가'] * item['수량'])) / new_q
             
             consolidated_stocks[name]['매수단가'] = new_p
             consolidated_stocks[name]['수량'] = new_q
-            needs_save = True # 병합이 일어났으므로 저장이 필요함
+            needs_save = True 
         else:
             consolidated_stocks[name] = {'종목명': name, '매수단가': item['매수단가'], '수량': item['수량']}
             
@@ -1168,7 +1207,6 @@ with tab2:
                 an, _ = get_stock_info(p_n)
                 stock_name = an if an else p_n
                 
-                # 💡 [신규 탑재] 추가 매수 시 즉각적인 평단가 병합 처리
                 idx = next((i for i, v in enumerate(p_data['stocks']) if v["종목명"] == stock_name), None)
                 if idx is not None:
                     old_p = p_data['stocks'][idx]['매수단가']
@@ -1433,6 +1471,7 @@ with tab3:
                             rr_2 = (tar_p - entry2) / denom if denom > 1e-5 else 0.0
                             
                             tags = []
+                            if ind.get('HA_ScrewBar'): tags.append("🍦HA스크류바") # 💡 [신규 탑재] 하이킨아시 스크류바 포착 태그
                             if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
                             if ind.get('Trend_Join'): tags.append("📈고가돌파")
@@ -1536,8 +1575,9 @@ with tab3:
                     
         st.markdown("<h4 style='color:#f8fafc; margin-top:30px; margin-bottom: 15px;'>🎯 맞춤형 전략 필터링 (결과 내 즉시 검색)</h4>", unsafe_allow_html=True)
         
+        # 💡 [신규 탑재] 스크류바 검색 필터 추가
         filter_mode = st.radio("전략 선택", 
-            ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📈 전일 고가 돌파 (Trend Join)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
+            ["🌟 전체 보기", "🍦 스크류바 (하이킨아시 양봉)", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📈 전일 고가 돌파 (Trend Join)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
             horizontal=True, label_visibility="collapsed"
         )
         
@@ -1548,6 +1588,8 @@ with tab3:
             df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
         elif "전일 고가 돌파" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('고가돌파')]
+        elif "스크류바" in filter_mode: # 💡 [신규 탑재] 필터링 조건문 추가
+            df_view = df_all[df_all['포착원인'].str.contains('스크류바')]
         elif "컵 앤 핸들" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('컵앤핸들')]
         elif "낙폭과대" in filter_mode:
