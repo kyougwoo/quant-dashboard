@@ -546,7 +546,7 @@ def calculate_cloud_indicators(df):
             "RSI_Turnaround": (prev['RSI'] <= 40) and (latest['RSI'] > prev['RSI']),
             "Volume_Explosion": is_vol_explosion,
             "Cup_and_Handle": is_cup_and_handle,
-            "Trend_Join": bool(latest['Close'] > prev['High']), # 💡 [신규 추가] 전일 고가 돌파 (Trend Join Long)
+            "Trend_Join": bool(latest['Close'] > prev['High']),
             "Cloud_Rules": {"주가 > 200일선": bool(latest['Close'] > latest['EMA200']), "200일선 우상향": bool(latest['EMA200'] >= prev['EMA200']), "5/15일선 정배열(돌파)": bool(prev['EMA5'] <= prev['EMA15'] and latest['EMA5'] > latest['EMA15']) or bool(latest['EMA5'] > latest['EMA15']), "최대 거래량 종가 돌파": bool(latest['Close'] > latest['Vol_Ref_Price'])}
         }
         return df, indicators
@@ -768,27 +768,18 @@ with tab1:
             plot_bgcolor="rgba(0,0,0,0)", 
             xaxis_rangeslider_visible=False, 
             height=900, 
-            margin=dict(l=10, r=120, t=40, b=20), # 💡 우측 여백(r)을 60에서 120으로 대폭 늘려 현재가 텍스트 짤림 현상 완벽 해결!
+            margin=dict(l=10, r=120, t=40, b=20),
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
-        # 💡 [디테일 완벽 튜닝] 차트 툴팁(Hover) 및 Y축 금액/수치 포맷팅 (k, M 단위를 알아보기 쉽게 원/달러 단위로 변경)
         is_us_stock = not str(ticker).isdigit() if ticker else False
-        
-        # 1층: 주가 및 이평선들 (한국 주식은 콤마+원, 미국 주식은 달러+소수점)
         fig.update_yaxes(tickformat="$,.2f" if is_us_stock else ",.0f", ticksuffix="" if is_us_stock else "원", row=1, col=1)
-        
-        # 2층: 거래량 (툴팁에서 k, M 대신 정확한 콤마 단위의 숫자로 표시)
         fig.update_yaxes(hoverformat=",.0f", row=2, col=1)
-        
-        # 3, 4층: 보조지표 (소수점 자릿수 깔끔하게 제한)
         fig.update_yaxes(hoverformat=",.2f", row=3, col=1)
         fig.update_yaxes(hoverformat=",.1f", row=4, col=1)
-
         fig.update_annotations(font_size=12, font_color="#94a3b8")
         
-        # 💡 [날짜 포맷팅 완벽 튜닝] 미국식 날짜(Jun 12, 2026)를 한국식(2026년 06월 12일)으로 전면 교체
         fig.update_xaxes(
             showgrid=True, gridwidth=1, gridcolor='rgba(51, 65, 85, 0.4)', zeroline=False,
             hoverformat="%Y년 %m월 %d일",
@@ -847,7 +838,6 @@ with tab1:
             final_stop = entry3 - (float(tech_ind['ATR']) * 1.5)
             avg_price = (entry1 * 0.2) + (entry2 * 0.3) + (entry3 * 0.5)
             
-            # 💡 [버그 완벽 차단] HTML 코드가 마크다운 엔진에 의해 끊기지 않도록 모두 평탄화
             html_pyramid = (
                 f"<div style='background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #3b82f6;'>"
                 f"<h4 style='color: #38bdf8; margin-top: 0; font-size: 1.1rem; margin-bottom: 15px;'>📐 실전 3분할 피라미드 매수 시나리오</h4>"
@@ -946,6 +936,31 @@ with tab1:
 # -----------------------------------------------------
 with tab2:
     p_data = st.session_state.p_data
+    
+    # 💡 [신규 탑재] 자동 평단가 병합 엔진 (물타기/불타기 데이터 클렌징)
+    # 흩어져 있는 동일 종목 데이터를 하나로 합치고 평균 단가와 총 수량을 다시 계산합니다.
+    consolidated_stocks = {}
+    needs_save = False
+    
+    for item in p_data.get('stocks', []):
+        name = item['종목명']
+        if name in consolidated_stocks:
+            old_p = consolidated_stocks[name]['매수단가']
+            old_q = consolidated_stocks[name]['수량']
+            new_q = old_q + item['수량']
+            # 가중 평균으로 평단가 계산: ((기존단가*기존수량) + (추가단가*추가수량)) / 총수량
+            new_p = ((old_p * old_q) + (item['매수단가'] * item['수량'])) / new_q
+            
+            consolidated_stocks[name]['매수단가'] = new_p
+            consolidated_stocks[name]['수량'] = new_q
+            needs_save = True # 병합이 일어났으므로 저장이 필요함
+        else:
+            consolidated_stocks[name] = {'종목명': name, '매수단가': item['매수단가'], '수량': item['수량']}
+            
+    if needs_save:
+        p_data['stocks'] = list(consolidated_stocks.values())
+        save_portfolio(p_data)
+
     ledger_data = st.session_state.ledger_data
     usd_krw = get_exchange_rate()
     
@@ -956,7 +971,6 @@ with tab2:
     with st.expander("📊 내 계좌 성과 리포트 (월별 수익 캘린더)", expanded=True):
         history_df = pd.DataFrame(ledger_data.get('history', []))
         
-        # 💡 [버그 완벽 차단] 날짜(date) 데이터가 비어있거나 형식이 잘못된 옛날 찌꺼기 데이터가 섞여 있을 때 발생하는 ValueError 방어
         if not history_df.empty and 'date' in history_df.columns:
             history_df['date'] = pd.to_datetime(history_df['date'], errors='coerce')
             history_df = history_df.dropna(subset=['date'])
@@ -1011,7 +1025,6 @@ with tab2:
             )
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             
-            # 💡 [가계부 편집 엔진 탑재] st.data_editor를 통한 완전한 CRUD(수정/삭제) 구현
             st.markdown("<h4 style='color: #38bdf8; margin-top: 10px; margin-bottom: 5px;'>📝 상세 매도 기록 (가계부 직접 수정)</h4>", unsafe_allow_html=True)
             st.markdown("<p style='font-size: 0.85em; color: #94a3b8; margin-bottom: 15px;'>💡 표의 셀을 더블클릭하여 오기재된 금액이나 종목명을 직접 수정할 수 있습니다. (행 좌측 선택 후 휴지통 아이콘/Delete 키 누르면 삭제)</p>", unsafe_allow_html=True)
             
@@ -1021,7 +1034,7 @@ with tab2:
                 edited_history = st.data_editor(
                     raw_history_df,
                     column_config={
-                        "id": None, # 고유 ID는 화면에 안보이게 숨김
+                        "id": None, 
                         "date": st.column_config.TextColumn("매도일자 (YYYY-MM-DD HH:MM)", required=True),
                         "ticker": st.column_config.TextColumn("종목", required=True),
                         "profit_krw": st.column_config.NumberColumn("실현수익(원)", format="%d", required=True),
@@ -1032,11 +1045,10 @@ with tab2:
                     num_rows="dynamic"
                 )
                 
-                # 변경사항 감지 후 즉시 DB 저장 및 새로고침
                 if str(raw_history_df.to_dict('records')) != str(edited_history.to_dict('records')):
                     updated_records = edited_history.to_dict('records')
                     for rec in updated_records:
-                        if pd.isna(rec.get('id')): # 새로 추가된 행이 있다면 자동 ID 발급
+                        if pd.isna(rec.get('id')): 
                             rec['id'] = f"manual_{time.time()}"
                     ledger_data['history'] = updated_records
                     save_ledger(ledger_data)
@@ -1123,7 +1135,6 @@ with tab2:
     )
     st.markdown(html_portfolio_kpi, unsafe_allow_html=True)
     
-    # 💡 [기능 업그레이드] 자산 배분 파이 차트에 '현금' 포함
     pie_labels = []
     pie_values = []
     
@@ -1153,7 +1164,25 @@ with tab2:
             with bc2: p_p = st.number_input("매수단가 (미국주식은 달러입력)", min_value=0.0)
             with bc3: p_q = st.number_input("수량", min_value=1.0)
             with bc4: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); submit = st.form_submit_button("추가", use_container_width=True)
-            if submit: an, _ = get_stock_info(p_n); p_data['stocks'].append({'종목명': an if an else p_n, '매수단가': p_p, '수량': p_q}); save_portfolio(p_data); st.rerun()
+            if submit: 
+                an, _ = get_stock_info(p_n)
+                stock_name = an if an else p_n
+                
+                # 💡 [신규 탑재] 추가 매수 시 즉각적인 평단가 병합 처리
+                idx = next((i for i, v in enumerate(p_data['stocks']) if v["종목명"] == stock_name), None)
+                if idx is not None:
+                    old_p = p_data['stocks'][idx]['매수단가']
+                    old_q = p_data['stocks'][idx]['수량']
+                    new_q = old_q + p_q
+                    new_p = ((old_p * old_q) + (p_p * p_q)) / new_q
+                    p_data['stocks'][idx]['매수단가'] = new_p
+                    p_data['stocks'][idx]['수량'] = new_q
+                else:
+                    p_data['stocks'].append({'종목명': stock_name, '매수단가': p_p, '수량': p_q})
+                
+                save_portfolio(p_data)
+                st.rerun()
+                
     with sell_tab:
         if not dis_df.empty:
             with st.form("sell"):
@@ -1201,10 +1230,8 @@ with tab2:
     if not dis_df.empty:
         st.markdown("<h4 style='color: #38bdf8; margin-top: 30px; margin-bottom: 20px; font-weight: 800;'>📊 실시간 포트폴리오 현황 (스마트 트레일링 가동중)</h4>", unsafe_allow_html=True)
         
-        # --- 1. 직관적인 카드 뷰 UI (모바일/웹 친화적) ---
         def fmt_price(val, cur): return f"${val:,.2f}" if cur == 'USD' else f"{int(val):,}원"
         
-        # 💡 [버그 완벽 수정] 카드 뷰 HTML 평탄화 (마크다운 파싱 에러 방지)
         cards_html = "<div style='display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 30px;'>"
         for _, row in dis_df.iterrows():
             is_profit = row['수익률(%)'] > 0
@@ -1236,7 +1263,6 @@ with tab2:
         cards_html += "</div>"
         st.markdown(cards_html, unsafe_allow_html=True)
         
-        # --- 2. 편집 가능한 데이터 테이블 ---
         st.markdown("<p style='color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;'>💡 <b>매수단가</b>와 <b>수량</b>의 숫자를 더블클릭하여 직접 수정할 수 있습니다.</p>", unsafe_allow_html=True)
         
         view_df = dis_df[['종목명', '통화', '매수단가', '수량', '현재가', '수익금', '수익률(%)', '🛡️손절/익절가']]
@@ -1256,8 +1282,8 @@ with tab2:
             column_config={
                 "종목명": st.column_config.TextColumn("📌 종목명", disabled=True),
                 "통화": st.column_config.TextColumn("💱 통화", disabled=True),
-                "매수단가": st.column_config.NumberColumn("🛒 매수단가", format="%d"),
-                "수량": st.column_config.NumberColumn("📦 수량", format="%d"),
+                "매수단가": st.column_config.NumberColumn("🛒 평단가", format="%d"),
+                "수량": st.column_config.NumberColumn("📦 총 수량", format="%d"),
                 "현재가": st.column_config.NumberColumn("📈 현재가", format="%d", disabled=True), 
                 "수익금": st.column_config.NumberColumn("💰 수익금", format="%d", disabled=True), 
                 "수익률(%)": st.column_config.NumberColumn("🔥 수익률(%)", format="%.2f", disabled=True),
@@ -1409,7 +1435,7 @@ with tab3:
                             tags = []
                             if ind.get('Cup_and_Handle'): tags.append("☕컵앤핸들")
                             if ind.get('Volume_Explosion'): tags.append("💥수급폭발")
-                            if ind.get('Trend_Join'): tags.append("📈고가돌파") # 💡 [신규 추가] 돌파 태그 삽입
+                            if ind.get('Trend_Join'): tags.append("📈고가돌파")
                             if ind['MACD_Early_Entry']: tags.append("🚀선취매")
                             if ind['RSI_Turnaround']: tags.append("📉RSI턴")
                             if ind['MACD_Cross']: tags.append("🟢골든크로스")
@@ -1513,14 +1539,14 @@ with tab3:
         filter_mode = st.radio("전략 선택", 
             ["🌟 전체 보기", "🔥 S급 돌파 (스퀴즈 + MACD상승)", "📈 전일 고가 돌파 (Trend Join)", "☕ 컵 앤 핸들 (U자 반등 후 돌파)", "📉 낙폭과대 (RSI 바닥턴)", "💥 수급폭발 (당일 주도주)"], 
             horizontal=True, label_visibility="collapsed"
-        ) # 💡 [신규 추가] 라디오 버튼에 '전일 고가 돌파' 옵션 추가
+        )
         
         num_cols = df_all.select_dtypes(include=[np.number]).columns
         df_all[num_cols] = df_all[num_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
         
         if "S급 돌파" in filter_mode:
             df_view = df_all[(df_all['볼린저상태'].str.contains('스퀴즈')) & (df_all['MACD'].str.contains('상승'))]
-        elif "전일 고가 돌파" in filter_mode: # 💡 [신규 추가] 필터링 조건 추가
+        elif "전일 고가 돌파" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('고가돌파')]
         elif "컵 앤 핸들" in filter_mode:
             df_view = df_all[df_all['포착원인'].str.contains('컵앤핸들')]
