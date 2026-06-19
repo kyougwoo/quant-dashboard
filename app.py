@@ -657,10 +657,13 @@ with tab1:
 
     st.markdown(f"<h3 style='color: #f8fafc;'>📊 {actual_name} <span style='font-size: 0.6em; color: #64748b;'>{ticker}</span></h3>", unsafe_allow_html=True)
     
-    col_opt1, col_opt2, col_opt3 = st.columns(3)
-    with col_opt1: show_trendline = st.toggle("📐 AI 자동 추세선 작도 켜기", value=True)
-    with col_opt2: show_heikin_ashi = st.toggle("🕯️ 하이킨아시 뷰 모드 켜기", value=False)
-    with col_opt3: show_larry_marker = st.toggle("⚡ 래리 돌파 마커 켜기", value=False)
+    col_opt1, col_opt2 = st.columns(2)
+    with col_opt1: show_trendline = st.toggle("📐 AI 자동 추세선", value=True)
+    with col_opt2: show_heikin_ashi = st.toggle("🕯️ 하이킨아시 뷰", value=False)
+    
+    col_opt3, col_opt4 = st.columns(2)
+    with col_opt3: show_larry_marker = st.toggle("⚡ 래리 마커", value=False)
+    with col_opt4: is_mobile_mode = st.toggle("📱 모바일 꽉찬 화면", value=True)
     
     # 💡 [모바일 최적화 탑재] 스마트폰 등 좁은 화면을 위한 캔들 개수 조절 슬라이더
     st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True)
@@ -768,7 +771,8 @@ with tab1:
         if s_x: fig.add_trace(go.Scatter(x=s_x, y=s_y, mode='markers', marker=dict(symbol='triangle-down', size=16, color='#f87171', line=dict(width=1.5, color='#0f172a')), name='시스템 매도'), row=1, col=1)
 
         curr_p = float(df['Close'].iloc[-1])
-        fig.add_hline(y=curr_p, line_dash="dot", line_color="#38bdf8", line_width=1.5, annotation_text=f"현재가: {format_price(curr_p, ticker)}", annotation_position="right", annotation_font=dict(color="white"), annotation_bgcolor="#0284c7", row=1, col=1)
+        ann_text = f"{curr_p:,.0f}" if is_mobile_mode else f"현재가: {format_price(curr_p, ticker)}"
+        fig.add_hline(y=curr_p, line_dash="dot", line_color="#38bdf8", line_width=1.5, annotation_text=ann_text, annotation_position="right", annotation_font=dict(color="white", size=10 if is_mobile_mode else 12), annotation_bgcolor="#0284c7", row=1, col=1)
 
         # ----------------------------------------
         # [2층] 거래량 차트
@@ -809,10 +813,11 @@ with tab1:
             paper_bgcolor="rgba(0,0,0,0)", 
             plot_bgcolor="rgba(0,0,0,0)", 
             xaxis_rangeslider_visible=False, 
-            height=900, 
-            margin=dict(l=10, r=120, t=40, b=20),
+            height=700 if is_mobile_mode else 900, 
+            margin=dict(l=5, r=50, t=10, b=5) if is_mobile_mode else dict(l=10, r=120, t=40, b=20),
             hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            showlegend=not is_mobile_mode,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1) if not is_mobile_mode else None
         )
         
         is_us_stock = not str(ticker).isdigit() if ticker else False
